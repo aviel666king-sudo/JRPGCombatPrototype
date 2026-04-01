@@ -1,0 +1,26 @@
+# Unreal Engine
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+.vs/
+*.VC.db
+
+# Visual Studio
+*.sln
+*.opensdf
+*.sdf
+*.suo
+*.tmp
+*.log
+*.user
+
+# Build
+Build/
+
+# Mac / Linux junk
+.DS_Store
+
+# Rider / VSCode
+.idea/
+.vscode/

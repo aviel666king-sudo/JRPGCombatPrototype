@@ -1,0 +1,20 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "1.0",
+  "FriendlyName": "JRPG Combat",
+  "Description": "Turn-based JRPG combat system plugin.",
+  "Category": "Gameplay",
+  "CreatedBy": "OpenAI",
+  "EnabledByDefault": true,
+  "CanContainContent": true,
+  "IsBetaVersion": false,
+  "Installed": false,
+  "Modules": [
+    {
+      "Name": "JRPGCombat",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    }
+  ]
+}

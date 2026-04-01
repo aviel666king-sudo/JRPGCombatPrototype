@@ -4,6 +4,8 @@
 #include "Characters/Base/CombatantBase.h"
 #include "PlayerCombatant.generated.h"
 
+class UAnimMontage;
+
 /**
  * APlayerCombatant
  *
@@ -30,4 +32,11 @@ public:
     {
         Team = ECombatTeam::Player;
     }
+
+    // Player-exclusive animation slots
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combatant|Animation")
+    TObjectPtr<UAnimMontage> GunMontage;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combatant|Animation")
+    TObjectPtr<UAnimMontage> ParryMontage;
 };

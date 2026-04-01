@@ -12,12 +12,12 @@ void UCombatAnimInstance::NativeInitializeAnimation()
 
     OwnerCombatant = Cast<ACombatantBase>(GetOwningActor());
 
-    OnMontageEnded.AddDynamic(this, &UCombatAnimInstance::OnMontageEnded);
+    OnMontageEnded.AddDynamic(this, &UCombatAnimInstance::HandleMontageEnded);
 }
 
 void UCombatAnimInstance::NativeUninitializeAnimation()
 {
-    OnMontageEnded.RemoveDynamic(this, &UCombatAnimInstance::OnMontageEnded);
+    OnMontageEnded.RemoveDynamic(this, &UCombatAnimInstance::HandleMontageEnded);
 
     Super::NativeUninitializeAnimation();
 }
@@ -63,7 +63,7 @@ bool UCombatAnimInstance::IsPlayingActionMontage() const
 //  Private
 // -----------------------------------------------------------------------------
 
-void UCombatAnimInstance::OnMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+void UCombatAnimInstance::HandleMontageEnded(UAnimMontage* Montage, bool bInterrupted)
 {
     // Return to idle after any action montage finishes (except death, which holds).
     if (CombatState != ECombatAnimState::Death)

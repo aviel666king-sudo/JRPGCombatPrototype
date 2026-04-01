@@ -79,6 +79,8 @@ void ABattleManager::ExecuteProtocol(EProtocolType Type, const TArray<ACombatant
 
     if (Proto && ActiveCombatant)
     {
+        // Protocols are support actions — play the cast animation.
+        ActiveCombatant->PlayAbilityAnimation(EAbilityCategory::Skill);
         Proto->Execute(ActiveCombatant, Targets);
     }
 
@@ -108,6 +110,34 @@ void ABattleManager::Phase_Initialize()
     }
 
     TurnOrderManager->BuildTurnOrder(Raw);
+
+    // ── Face combatants toward the opposing team ──────────────────────────────
+    {
+        FVector PlayerCenter = FVector::ZeroVector;
+        int32   PlayerCount  = 0;
+        FVector EnemyCenter  = FVector::ZeroVector;
+        int32   EnemyCount   = 0;
+
+        for (ACombatantBase* C : Raw)
+        {
+            if (C->GetTeam() == ECombatTeam::Player) { PlayerCenter += C->GetActorLocation(); ++PlayerCount; }
+            else                                      { EnemyCenter  += C->GetActorLocation(); ++EnemyCount;  }
+        }
+
+        if (PlayerCount > 0) PlayerCenter /= static_cast<float>(PlayerCount);
+        if (EnemyCount  > 0) EnemyCenter  /= static_cast<float>(EnemyCount);
+
+        for (ACombatantBase* C : Raw)
+        {
+            const FVector LookAt = (C->GetTeam() == ECombatTeam::Player) ? EnemyCenter : PlayerCenter;
+            const FVector Dir    = (LookAt - C->GetActorLocation()).GetSafeNormal2D();
+            if (!Dir.IsNearlyZero())
+            {
+                C->SetActorRotation(Dir.Rotation());
+            }
+        }
+    }
+
     Phase_StartNextTurn();
 }
 
@@ -181,6 +211,12 @@ void ABattleManager::Phase_ExecutePlayerAction(int32 AbilityIndex,
     }
     PendingDamageMultiplier = 1.0f; // always reset, regardless of success
 
+    // Trigger the matching animation before the ability resolves.
+    if (const UCombatAbility* Ability = ActiveCombatant->AbilityManager->GetAbility(AbilityIndex))
+    {
+        ActiveCombatant->PlayAbilityAnimation(Ability->AbilityCategory);
+    }
+
     const bool bActivated = ActiveCombatant->AbilityManager->TryActivateAbility(AbilityIndex, Targets);
     if (!bActivated)
     {
@@ -220,6 +256,12 @@ void ABattleManager::Phase_ExecuteEnemyAction()
         Targets = { ActiveCombatant };
     else
         Targets = { Candidates[FMath::RandRange(0, Candidates.Num() - 1)] };
+
+    // Trigger animation for the enemy's ability.
+    if (Ability)
+    {
+        ActiveCombatant->PlayAbilityAnimation(Ability->AbilityCategory);
+    }
 
     ActiveCombatant->AbilityManager->TryActivateAbility(0, Targets);
 

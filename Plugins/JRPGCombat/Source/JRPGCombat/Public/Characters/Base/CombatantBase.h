@@ -9,7 +9,7 @@ class UAbilityManagerComponent;
 class UStatusEffectManagerComponent;
 class UCapsuleComponent;
 class USkeletalMeshComponent;
-class UCombatAnimInstance;
+class UAnimMontage;
 
 UCLASS(Abstract, BlueprintType, Blueprintable)
 class JRPGCOMBAT_API ACombatantBase : public AActor
@@ -191,20 +191,37 @@ public:
     ECombatTeam GetTeam() const { return Team; }
 
     // -------------------------------------------------------------------------
-    //  Animation
+    //  Animation — montage slots (assign in BP_PlayerFencer / BP_EnemyUnit)
     // -------------------------------------------------------------------------
 
-    /** Trigger the animation that matches an ability category (Melee/Gun/Skill). */
+    // Shared by all combatants
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combatant|Animation")
+    TObjectPtr<UAnimMontage> AttackMontage;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combatant|Animation")
+    TObjectPtr<UAnimMontage> CastMontage;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combatant|Animation")
+    TObjectPtr<UAnimMontage> HitReactMontage;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combatant|Animation")
+    TObjectPtr<UAnimMontage> DeathMontage;
+
+    // -------------------------------------------------------------------------
+    //  Animation — helpers
+    // -------------------------------------------------------------------------
+
+    /** Play the montage that matches an ability category (Melee/Gun/Skill). */
     UFUNCTION(BlueprintCallable, Category = "Combatant|Animation")
     void PlayAbilityAnimation(EAbilityCategory Category);
 
-    /** Play the hit-react montage (or death montage if the combatant just died). */
+    /** Play the hit-react montage, or death montage if the combatant just died. */
     UFUNCTION(BlueprintCallable, Category = "Combatant|Animation")
     void PlayReactionAnimation();
 
-    /** Returns the UCombatAnimInstance on the Mesh, or nullptr if not set. */
-    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Combatant|Animation")
-    UCombatAnimInstance* GetCombatAnimInstance() const;
+    /** Play any montage directly on this combatant's mesh. */
+    UFUNCTION(BlueprintCallable, Category = "Combatant|Animation")
+    void PlayMontage(UAnimMontage* Montage);
 
 protected:
 

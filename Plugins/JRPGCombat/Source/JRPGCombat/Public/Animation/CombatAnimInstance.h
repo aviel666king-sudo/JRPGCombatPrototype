@@ -109,7 +109,8 @@ public:
 
 private:
 
-    void OnMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+    UFUNCTION()
+    void HandleMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 
     UPROPERTY()
     TObjectPtr<class ACombatantBase> OwnerCombatant;

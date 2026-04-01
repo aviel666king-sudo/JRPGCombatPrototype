@@ -2,11 +2,13 @@
 // Only the Revive() function is new; all other implementations are unchanged.
 
 #include "Characters/Base/CombatantBase.h"
+#include "Characters/Player/PlayerCombatant.h"
 #include "Components/AbilityManagerComponent.h"
 #include "Components/StatusEffectManagerComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
-#include "Animation/CombatAnimInstance.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
 
 ACombatantBase::ACombatantBase()
 {
@@ -123,6 +125,9 @@ void ACombatantBase::ApplyDamage(FDamagePayload& Payload)
     SpendResource(EResourceType::HP, Damage);
 
     BP_OnDamageTaken(Payload.Source, Damage, Payload.DamageType);
+
+    // Play hit react or death animation automatically on every hit.
+    PlayReactionAnimation();
 
     StatusEffectManager->NotifyAfterTakeDamage(Payload);
     if (Payload.Source && Payload.Source->StatusEffectManager)
@@ -273,41 +278,38 @@ float ACombatantBase::GetEffectiveSpeed() const
 //  Animation
 // -----------------------------------------------------------------------------
 
-UCombatAnimInstance* ACombatantBase::GetCombatAnimInstance() const
+void ACombatantBase::PlayMontage(UAnimMontage* Montage)
 {
-    if (!Mesh) { return nullptr; }
-    return Cast<UCombatAnimInstance>(Mesh->GetAnimInstance());
+    if (!Montage || !Mesh) { return; }
+    UAnimInstance* AnimInst = Mesh->GetAnimInstance();
+    if (!AnimInst) { return; }
+    AnimInst->Montage_Play(Montage);
 }
 
 void ACombatantBase::PlayAbilityAnimation(EAbilityCategory Category)
 {
-    UCombatAnimInstance* AnimInst = GetCombatAnimInstance();
-    if (!AnimInst) { return; }
-
     switch (Category)
     {
     case EAbilityCategory::Melee:
-        AnimInst->PlayCombatMontage(ECombatAnimState::Attack);
+        PlayMontage(AttackMontage);
         break;
     case EAbilityCategory::Gun:
-        AnimInst->PlayCombatMontage(ECombatAnimState::Gun);
+        if (APlayerCombatant* PC = Cast<APlayerCombatant>(this))
+            PlayMontage(PC->GunMontage);
         break;
     case EAbilityCategory::Skill:
-        AnimInst->PlayCombatMontage(ECombatAnimState::Casting);
+        PlayMontage(CastMontage);
         break;
     default:
-        AnimInst->PlayCombatMontage(ECombatAnimState::Attack);
+        PlayMontage(AttackMontage);
         break;
     }
 }
 
 void ACombatantBase::PlayReactionAnimation()
 {
-    UCombatAnimInstance* AnimInst = GetCombatAnimInstance();
-    if (!AnimInst) { return; }
-
     if (IsDead())
-        AnimInst->PlayCombatMontage(ECombatAnimState::Death);
+        PlayMontage(DeathMontage);
     else
-        AnimInst->PlayCombatMontage(ECombatAnimState::HitReact);
+        PlayMontage(HitReactMontage);
 }

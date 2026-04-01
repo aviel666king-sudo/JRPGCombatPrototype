@@ -4,10 +4,34 @@
 #include "Characters/Base/CombatantBase.h"
 #include "Components/AbilityManagerComponent.h"
 #include "Components/StatusEffectManagerComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Animation/CombatAnimInstance.h"
 
 ACombatantBase::ACombatantBase()
 {
     PrimaryActorTick.bCanEverTick = false;
+
+    // -------------------------------------------------------------------------
+    //  Visual setup
+    // -------------------------------------------------------------------------
+
+    CapsuleComponent = CreateDefaultSubobject<UCapsuleComponent>(TEXT("CapsuleComponent"));
+    CapsuleComponent->SetCapsuleHalfHeight(90.0f);
+    CapsuleComponent->SetCapsuleRadius(30.0f);
+    CapsuleComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    RootComponent = CapsuleComponent;
+
+    Mesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Mesh"));
+    Mesh->SetupAttachment(CapsuleComponent);
+    // Standard UE5 mannequin offset: mesh base sits at capsule bottom, facing forward
+    Mesh->SetRelativeLocation(FVector(0.0f, 0.0f, -90.0f));
+    Mesh->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
+    Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+    // -------------------------------------------------------------------------
+    //  Combat components
+    // -------------------------------------------------------------------------
 
     AbilityManager      = CreateDefaultSubobject<UAbilityManagerComponent>(TEXT("AbilityManager"));
     StatusEffectManager = CreateDefaultSubobject<UStatusEffectManagerComponent>(TEXT("StatusEffectManager"));
@@ -243,4 +267,47 @@ bool ACombatantBase::IsDead() const
 float ACombatantBase::GetEffectiveSpeed() const
 {
     return BaseStats.Speed * StatusEffectManager->GetSpeedMultiplier();
+}
+
+// -----------------------------------------------------------------------------
+//  Animation
+// -----------------------------------------------------------------------------
+
+UCombatAnimInstance* ACombatantBase::GetCombatAnimInstance() const
+{
+    if (!Mesh) { return nullptr; }
+    return Cast<UCombatAnimInstance>(Mesh->GetAnimInstance());
+}
+
+void ACombatantBase::PlayAbilityAnimation(EAbilityCategory Category)
+{
+    UCombatAnimInstance* AnimInst = GetCombatAnimInstance();
+    if (!AnimInst) { return; }
+
+    switch (Category)
+    {
+    case EAbilityCategory::Melee:
+        AnimInst->PlayCombatMontage(ECombatAnimState::Attack);
+        break;
+    case EAbilityCategory::Gun:
+        AnimInst->PlayCombatMontage(ECombatAnimState::Gun);
+        break;
+    case EAbilityCategory::Skill:
+        AnimInst->PlayCombatMontage(ECombatAnimState::Casting);
+        break;
+    default:
+        AnimInst->PlayCombatMontage(ECombatAnimState::Attack);
+        break;
+    }
+}
+
+void ACombatantBase::PlayReactionAnimation()
+{
+    UCombatAnimInstance* AnimInst = GetCombatAnimInstance();
+    if (!AnimInst) { return; }
+
+    if (IsDead())
+        AnimInst->PlayCombatMontage(ECombatAnimState::Death);
+    else
+        AnimInst->PlayCombatMontage(ECombatAnimState::HitReact);
 }

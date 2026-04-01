@@ -7,6 +7,9 @@
 
 class UAbilityManagerComponent;
 class UStatusEffectManagerComponent;
+class UCapsuleComponent;
+class USkeletalMeshComponent;
+class UCombatAnimInstance;
 
 UCLASS(Abstract, BlueprintType, Blueprintable)
 class JRPGCOMBAT_API ACombatantBase : public AActor
@@ -31,7 +34,17 @@ public:
     FCombatStats BaseStats;
 
     // -------------------------------------------------------------------------
-    //  Components
+    //  Visual components
+    // -------------------------------------------------------------------------
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combatant|Visual")
+    TObjectPtr<UCapsuleComponent> CapsuleComponent;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combatant|Visual")
+    TObjectPtr<USkeletalMeshComponent> Mesh;
+
+    // -------------------------------------------------------------------------
+    //  Combat components
     // -------------------------------------------------------------------------
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combatant|Components")
@@ -176,6 +189,22 @@ public:
 
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Combatant")
     ECombatTeam GetTeam() const { return Team; }
+
+    // -------------------------------------------------------------------------
+    //  Animation
+    // -------------------------------------------------------------------------
+
+    /** Trigger the animation that matches an ability category (Melee/Gun/Skill). */
+    UFUNCTION(BlueprintCallable, Category = "Combatant|Animation")
+    void PlayAbilityAnimation(EAbilityCategory Category);
+
+    /** Play the hit-react montage (or death montage if the combatant just died). */
+    UFUNCTION(BlueprintCallable, Category = "Combatant|Animation")
+    void PlayReactionAnimation();
+
+    /** Returns the UCombatAnimInstance on the Mesh, or nullptr if not set. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Combatant|Animation")
+    UCombatAnimInstance* GetCombatAnimInstance() const;
 
 protected:
 

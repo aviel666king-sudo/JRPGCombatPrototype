@@ -1,5 +1,6 @@
 #include "Core/BattleManager.h"
 #include "Characters/Base/CombatantBase.h"
+#include "Components/CapsuleComponent.h"
 #include "Core/TurnOrderManager.h"
 #include "Components/AbilityManagerComponent.h"
 #include "Components/ProtocolManagerComponent.h"
@@ -110,6 +111,38 @@ void ABattleManager::Phase_Initialize()
     }
 
     TurnOrderManager->BuildTurnOrder(Raw);
+
+    // ── Teleport combatants to their spawn points ─────────────────────────────
+    {
+        TArray<ACombatantBase*> Players, Enemies;
+        for (ACombatantBase* C : Raw)
+        {
+            if (C->GetTeam() == ECombatTeam::Player) Players.Add(C);
+            else                                      Enemies.Add(C);
+        }
+
+        auto TeleportToSpawn = [](ACombatantBase* C, AActor* SpawnPoint)
+        {
+            FVector Loc = SpawnPoint->GetActorLocation();
+            // Lift the character so it stands on top of the spawn point
+            // rather than sinking into the floor.
+            if (C->CapsuleComponent)
+                Loc.Z += C->CapsuleComponent->GetScaledCapsuleHalfHeight();
+            C->SetActorLocation(Loc);
+        };
+
+        for (int32 i = 0; i < Players.Num(); ++i)
+        {
+            if (PlayerSpawnPoints.IsValidIndex(i) && PlayerSpawnPoints[i])
+                TeleportToSpawn(Players[i], PlayerSpawnPoints[i]);
+        }
+
+        for (int32 i = 0; i < Enemies.Num(); ++i)
+        {
+            if (EnemySpawnPoints.IsValidIndex(i) && EnemySpawnPoints[i])
+                TeleportToSpawn(Enemies[i], EnemySpawnPoints[i]);
+        }
+    }
 
     // ── Face combatants toward the opposing team ──────────────────────────────
     {

@@ -55,6 +55,20 @@ public:
     //  Setup
     // -------------------------------------------------------------------------
 
+    // -------------------------------------------------------------------------
+    //  Spawn points
+    //  Assign level actors (e.g. the grass pads) here.
+    //  On battle start each combatant is teleported to their matching slot.
+    //  Index 0 = first player/enemy, index 1 = second, etc.
+    //  If an index has no spawn point the combatant stays where it is.
+    // -------------------------------------------------------------------------
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle|Setup")
+    TArray<TObjectPtr<AActor>> PlayerSpawnPoints;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle|Setup")
+    TArray<TObjectPtr<AActor>> EnemySpawnPoints;
+
     UFUNCTION(BlueprintCallable, Category = "Battle")
     void StartBattle(const TArray<ACombatantBase*>& PlayerParty,
                      const TArray<ACombatantBase*>& EnemyParty);

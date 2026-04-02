@@ -7,6 +7,8 @@
 #include "Characters/Base/CombatantBase.h"
 #include "Components/AbilityManagerComponent.h"
 #include "Components/PanelWidget.h"
+#include "Components/Widget.h"
+#include "GameFramework/PlayerController.h"
 #include "Framework/Application/SlateApplication.h"
 #include "InputCoreTypes.h"
 #include "Input/Events.h"
@@ -33,6 +35,7 @@ void UCombatHUDWidget::NativeDestruct()
         BM->OnTargetSelectionChanged.RemoveDynamic(this,&UCombatHUDWidget::OnTargetChanged);
         BM->OnEnemyActingChanged.RemoveDynamic(this,    &UCombatHUDWidget::OnEnemyActingChanged);
         BM->OnBattleEnded.RemoveDynamic(this,           &UCombatHUDWidget::OnBattleEnded);
+        BM->OnGunAimChanged.RemoveDynamic(this,         &UCombatHUDWidget::OnGunAimModeChanged);
     }
 
     Super::NativeDestruct();
@@ -57,6 +60,13 @@ void UCombatHUDWidget::InitializeHUD(ABattleManager* InBattleManager)
     InBattleManager->OnTargetSelectionChanged.AddDynamic(this,&UCombatHUDWidget::OnTargetChanged);
     InBattleManager->OnEnemyActingChanged.AddDynamic(this,    &UCombatHUDWidget::OnEnemyActingChanged);
     InBattleManager->OnBattleEnded.AddDynamic(this,           &UCombatHUDWidget::OnBattleEnded);
+    InBattleManager->OnGunAimChanged.AddDynamic(this,         &UCombatHUDWidget::OnGunAimModeChanged);
+
+    // Crosshair starts hidden.
+    if (CrosshairWidget)
+    {
+        CrosshairWidget->SetVisibility(ESlateVisibility::Collapsed);
+    }
 
     if (ActionPanel) { ActionPanel->InitializePanel(InBattleManager, this); }
 
@@ -243,12 +253,132 @@ FReply UCombatHUDWidget::NativeOnKeyDown(const FGeometry& InGeometry,
 FReply UCombatHUDWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry,
                                                    const FPointerEvent& InMouseEvent)
 {
-    // Re-capture keyboard focus whenever the player clicks anything in the HUD.
-    // This is the fix for the "click somewhere → keyboard stops working" bug.
-    // We take focus back immediately on every mouse-down without blocking the click.
-    RecaptureKeyboardFocus();
+    ABattleManager* BM = BattleManager.Get();
 
+    // ── Right mouse button — enter gun aim mode ───────────────────────────────
+    if (InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton)
+    {
+        if (BM && BM->GetCurrentPhase() == EBattlePhase::AwaitingInput && !bGunAimInputActive)
+        {
+            BM->BeginGunAimMode();
+        }
+        // Capture mouse so NativeOnMouseButtonUp fires even after cursor moves.
+        TSharedPtr<SWidget> SafeWidget = GetCachedWidget();
+        if (SafeWidget.IsValid())
+        {
+            return FReply::Handled().CaptureMouse(SafeWidget.ToSharedRef());
+        }
+        return FReply::Handled();
+    }
+
+    // ── Left mouse button during gun aim — fire ───────────────────────────────
+    if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton && bGunAimInputActive)
+    {
+        if (BM) { BM->FireGunAimShot(); }
+        return FReply::Handled();
+    }
+
+    // ── Any other click — recapture keyboard focus ────────────────────────────
+    RecaptureKeyboardFocus();
     return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+}
+
+FReply UCombatHUDWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry,
+                                                const FPointerEvent& InMouseEvent)
+{
+    // ── Right mouse button release — exit gun aim mode ────────────────────────
+    if (InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton)
+    {
+        ABattleManager* BM = BattleManager.Get();
+        if (BM && bGunAimInputActive) { BM->EndGunAimMode(); }
+        return FReply::Handled().ReleaseMouseCapture();
+    }
+
+    return Super::NativeOnMouseButtonUp(InGeometry, InMouseEvent);
+}
+
+// -----------------------------------------------------------------------------
+//  Gun aim tick — mouse-delta → camera rotation
+// -----------------------------------------------------------------------------
+
+void UCombatHUDWidget::NativeTick(const FGeometry& AllottedGeometry, float InDeltaTime)
+{
+    Super::NativeTick(AllottedGeometry, InDeltaTime);
+
+    if (!bGunAimInputActive) { return; }
+
+    ABattleManager* BM = BattleManager.Get();
+    if (!BM || !BM->IsGunAimActive()) { return; }
+
+    APlayerController* PC = GetOwningPlayer();
+    if (!PC) { return; }
+
+    int32 VX = 0, VY = 0;
+    PC->GetViewportSize(VX, VY);
+
+    const float CX = VX * 0.5f;
+    const float CY = VY * 0.5f;
+
+    float MX = 0.f, MY = 0.f;
+    if (PC->GetMousePosition(MX, MY))
+    {
+        const float DX = MX - CX;
+        const float DY = MY - CY;
+
+        // Only update if the cursor actually moved (avoids micro-jitter from warp).
+        if (FMath::Abs(DX) > 0.5f || FMath::Abs(DY) > 0.5f)
+        {
+            // DY is inverted: moving the mouse down tilts the camera up naturally.
+            BM->UpdateGunAimRotation(DX, -DY);
+
+            // Warp cursor back to center so it never hits the screen edge.
+            PC->SetMouseLocation(FMath::RoundToInt(CX), FMath::RoundToInt(CY));
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+//  Gun aim mode changed — crosshair, cursor, action panel
+// -----------------------------------------------------------------------------
+
+void UCombatHUDWidget::OnGunAimModeChanged(bool bAiming)
+{
+    bGunAimInputActive = bAiming;
+
+    // Show / hide crosshair.
+    if (CrosshairWidget)
+    {
+        CrosshairWidget->SetVisibility(bAiming
+            ? ESlateVisibility::HitTestInvisible   // visible but doesn't block clicks
+            : ESlateVisibility::Collapsed);
+    }
+
+    // Dim and lock the action panel while aiming so buttons aren't clickable.
+    if (ActionPanel)
+    {
+        if (bAiming)
+        {
+            ActionPanel->SetRenderOpacity(0.f);
+            ActionPanel->SetIsEnabled(false);
+        }
+        else
+        {
+            // Restore panel to the main menu — the player is back in AwaitingInput.
+            ActionPanel->SetMenuState(ECombatMenuState::MainMenu);
+        }
+    }
+
+    // Hide the OS cursor while aiming; center it so the first tick reads zero delta.
+    if (APlayerController* PC = GetOwningPlayer())
+    {
+        PC->bShowMouseCursor = !bAiming;
+        if (bAiming)
+        {
+            int32 VX = 0, VY = 0;
+            PC->GetViewportSize(VX, VY);
+            PC->SetMouseLocation(VX / 2, VY / 2);
+        }
+    }
 }
 
 // -----------------------------------------------------------------------------

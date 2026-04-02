@@ -11,6 +11,7 @@ class UUnitStatusWidget;
 class UTurnInfoWidget;
 class UCombatActionPanelWidget;
 class UPanelWidget;
+class UWidget;
 
 /**
  * UCombatHUDWidget
@@ -70,6 +71,12 @@ public:
     UPROPERTY(meta = (BindWidgetOptional))
     TObjectPtr<UCombatActionPanelWidget> ActionPanel;
 
+    /** Crosshair overlay — shown during gun aim mode, hidden otherwise.
+     *  In WBP_CombatHUD: add any widget named "CrosshairWidget" (e.g. an Image
+     *  with a crosshair texture) centered on screen. Start it Collapsed. */
+    UPROPERTY(meta = (BindWidgetOptional))
+    TObjectPtr<UWidget> CrosshairWidget;
+
     // -------------------------------------------------------------------------
     //  Runtime arrays
     // -------------------------------------------------------------------------
@@ -109,16 +116,16 @@ protected:
     virtual void NativeConstruct() override;
     virtual void NativeDestruct()  override;
 
+    virtual void NativeTick(const FGeometry& AllottedGeometry, float InDeltaTime) override;
+
     virtual FReply NativeOnKeyDown(const FGeometry& InGeometry,
                                    const FKeyEvent&  InKeyEvent) override;
 
-    /**
-     * Re-capture keyboard focus whenever the player clicks anywhere on the HUD.
-     * This prevents mouse interaction from permanently stealing focus away from
-     * the combat keyboard controls.
-     */
     virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry,
                                            const FPointerEvent& InMouseEvent) override;
+
+    virtual FReply NativeOnMouseButtonUp(const FGeometry& InGeometry,
+                                         const FPointerEvent& InMouseEvent) override;
 
     virtual bool NativeSupportsKeyboardFocus() const override { return true; }
 
@@ -129,6 +136,16 @@ private:
     TWeakObjectPtr<UUnitStatusWidget> ActivePlayerWidget;
     TWeakObjectPtr<UUnitStatusWidget> TargetEnemyWidget;
     TWeakObjectPtr<UUnitStatusWidget> EnemyActingWidget;  // orange highlight
+
+    // ── Gun aim input ─────────────────────────────────────────────────────────
+
+    /** True while the player is holding RMB and gun aim is active. */
+    bool bGunAimInputActive = false;
+
+    /** Fired by BattleManager::OnGunAimChanged — shows/hides crosshair,
+     *  hides cursor, centers mouse, dims the action panel. */
+    UFUNCTION()
+    void OnGunAimModeChanged(bool bAiming);
 
     void CollectUnitWidgets(UPanelWidget* Panel,
                             TArray<TObjectPtr<UUnitStatusWidget>>& OutWidgets);

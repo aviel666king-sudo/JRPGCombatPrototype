@@ -90,7 +90,8 @@ class UCombatHUDWidget;         // forward declare (avoid circular include)
  *
  *  ── Slot 3: Target Selection ───────────────────────────────────────────────
  *  [HorizontalBox]
- *    [TextBlock] Name="TargetHintText"   "Select Target — A/D to navigate, Space to confirm, Esc to cancel"
+ *    [TextBlock] Name="TargetHintText"      "Select Target — A/D  Space  Backspace"
+ *    [Button]    Name="BackButtonTarget"    "← Cancel"    (always visible; recovers focus after alt-tab)
  *
  *  Hotkey text color: set to a distinct color (e.g. yellow) in Blueprint.
  *  Action name color: white.
@@ -162,6 +163,11 @@ public:
     // ── Target selection info ─────────────────────────────────────────────────
     UPROPERTY(meta = (BindWidgetOptional))
     TObjectPtr<UTextBlock> TargetHintText;
+
+    /** Cancel button shown during target selection — gives the player a
+     *  clickable escape route when keyboard focus has been lost (e.g. alt-tab). */
+    UPROPERTY(meta = (BindWidgetOptional))
+    TObjectPtr<UButton> BackButtonTarget;
 
     // -------------------------------------------------------------------------
     //  API
@@ -301,6 +307,9 @@ private:
 
     UFUNCTION()
     void OnBackFromProtocolClicked();
+
+    UFUNCTION()
+    void OnBackFromTargetClicked();
 
     UFUNCTION()
     void OnHealingProtocolClicked();

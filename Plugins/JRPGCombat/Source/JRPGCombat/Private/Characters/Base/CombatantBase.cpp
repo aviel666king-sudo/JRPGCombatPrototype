@@ -21,7 +21,12 @@ ACombatantBase::ACombatantBase()
     CapsuleComponent = CreateDefaultSubobject<UCapsuleComponent>(TEXT("CapsuleComponent"));
     CapsuleComponent->SetCapsuleHalfHeight(90.0f);
     CapsuleComponent->SetCapsuleRadius(30.0f);
-    CapsuleComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    // QueryOnly so gun aim line traces can hit combatants without
+    // interfering with physics/movement (none needed for turn-based).
+    CapsuleComponent->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+    CapsuleComponent->SetCollisionObjectType(ECC_Pawn);
+    CapsuleComponent->SetCollisionResponseToAllChannels(ECR_Ignore);
+    CapsuleComponent->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
     RootComponent = CapsuleComponent;
 
     Mesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Mesh"));

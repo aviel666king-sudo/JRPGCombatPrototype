@@ -2,12 +2,43 @@
 // Only the Revive() function is new; all other implementations are unchanged.
 
 #include "Characters/Base/CombatantBase.h"
+#include "Characters/Player/PlayerCombatant.h"
 #include "Components/AbilityManagerComponent.h"
 #include "Components/StatusEffectManagerComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
 
 ACombatantBase::ACombatantBase()
 {
     PrimaryActorTick.bCanEverTick = false;
+
+    // -------------------------------------------------------------------------
+    //  Visual setup
+    // -------------------------------------------------------------------------
+
+    CapsuleComponent = CreateDefaultSubobject<UCapsuleComponent>(TEXT("CapsuleComponent"));
+    CapsuleComponent->SetCapsuleHalfHeight(90.0f);
+    CapsuleComponent->SetCapsuleRadius(30.0f);
+    // QueryOnly so gun aim line traces can hit combatants without
+    // interfering with physics/movement (none needed for turn-based).
+    CapsuleComponent->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+    CapsuleComponent->SetCollisionObjectType(ECC_Pawn);
+    CapsuleComponent->SetCollisionResponseToAllChannels(ECR_Ignore);
+    CapsuleComponent->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+    RootComponent = CapsuleComponent;
+
+    Mesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Mesh"));
+    Mesh->SetupAttachment(CapsuleComponent);
+    // Standard UE5 mannequin offset: mesh base sits at capsule bottom, facing forward
+    Mesh->SetRelativeLocation(FVector(0.0f, 0.0f, -90.0f));
+    Mesh->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
+    Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+    // -------------------------------------------------------------------------
+    //  Combat components
+    // -------------------------------------------------------------------------
 
     AbilityManager      = CreateDefaultSubobject<UAbilityManagerComponent>(TEXT("AbilityManager"));
     StatusEffectManager = CreateDefaultSubobject<UStatusEffectManagerComponent>(TEXT("StatusEffectManager"));
@@ -99,6 +130,9 @@ void ACombatantBase::ApplyDamage(FDamagePayload& Payload)
     SpendResource(EResourceType::HP, Damage);
 
     BP_OnDamageTaken(Payload.Source, Damage, Payload.DamageType);
+
+    // Play hit react or death animation automatically on every hit.
+    PlayReactionAnimation();
 
     StatusEffectManager->NotifyAfterTakeDamage(Payload);
     if (Payload.Source && Payload.Source->StatusEffectManager)
@@ -243,4 +277,44 @@ bool ACombatantBase::IsDead() const
 float ACombatantBase::GetEffectiveSpeed() const
 {
     return BaseStats.Speed * StatusEffectManager->GetSpeedMultiplier();
+}
+
+// -----------------------------------------------------------------------------
+//  Animation
+// -----------------------------------------------------------------------------
+
+void ACombatantBase::PlayMontage(UAnimMontage* Montage)
+{
+    if (!Montage || !Mesh) { return; }
+    UAnimInstance* AnimInst = Mesh->GetAnimInstance();
+    if (!AnimInst) { return; }
+    AnimInst->Montage_Play(Montage);
+}
+
+void ACombatantBase::PlayAbilityAnimation(EAbilityCategory Category)
+{
+    switch (Category)
+    {
+    case EAbilityCategory::Melee:
+        PlayMontage(AttackMontage);
+        break;
+    case EAbilityCategory::Gun:
+        if (APlayerCombatant* PC = Cast<APlayerCombatant>(this))
+            PlayMontage(PC->GunMontage);
+        break;
+    case EAbilityCategory::Skill:
+        PlayMontage(CastMontage);
+        break;
+    default:
+        PlayMontage(AttackMontage);
+        break;
+    }
+}
+
+void ACombatantBase::PlayReactionAnimation()
+{
+    if (IsDead())
+        PlayMontage(DeathMontage);
+    else
+        PlayMontage(HitReactMontage);
 }

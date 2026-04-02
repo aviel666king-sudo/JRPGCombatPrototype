@@ -1,5 +1,6 @@
 #include "Core/BattleManager.h"
 #include "Characters/Base/CombatantBase.h"
+#include "Components/CapsuleComponent.h"
 #include "Core/TurnOrderManager.h"
 #include "Components/AbilityManagerComponent.h"
 #include "Components/ProtocolManagerComponent.h"
@@ -10,6 +11,10 @@
 #include "UI/CombatHUDWidget.h"
 #include "Engine/Engine.h"
 #include "Blueprint/UserWidget.h"
+#include "Camera/CameraActor.h"
+#include "GameFramework/PlayerController.h"
+#include "Kismet/GameplayStatics.h"
+#include "EngineUtils.h"
 
 ABattleManager::ABattleManager()
 {
@@ -79,6 +84,8 @@ void ABattleManager::ExecuteProtocol(EProtocolType Type, const TArray<ACombatant
 
     if (Proto && ActiveCombatant)
     {
+        // Protocols are support actions — play the cast animation.
+        ActiveCombatant->PlayAbilityAnimation(EAbilityCategory::Skill);
         Proto->Execute(ActiveCombatant, Targets);
     }
 
@@ -108,6 +115,111 @@ void ABattleManager::Phase_Initialize()
     }
 
     TurnOrderManager->BuildTurnOrder(Raw);
+
+    // ── Cache PlayerController early so camera calls work on Turn 1 ──────────
+    if (!CachedPlayerController)
+    {
+        CachedPlayerController = GetWorld()->GetFirstPlayerController();
+    }
+
+    // ── Use whatever camera the Level Blueprint already set as the base ───────
+    if (!BaseCameraActor && CachedPlayerController)
+    {
+        BaseCameraActor = Cast<ACameraActor>(CachedPlayerController->GetViewTarget());
+    }
+
+    // ── Auto-discover spawn points and named cameras ──────────────────────────
+    {
+        for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+        {
+            AActor* A = *It;
+            FString N = A->GetActorNameOrLabel();
+
+            // Spawn pads
+            if (N.StartsWith(TEXT("PartySlot"))) PlayerSpawnPoints.AddUnique(A);
+            if (N.StartsWith(TEXT("EnemySlot"))) EnemySpawnPoints.AddUnique(A);
+
+            // Named runtime cameras (repositioned dynamically — level placement doesn't matter)
+            if (ACameraActor* Cam = Cast<ACameraActor>(A))
+            {
+                if      (N.Equals(TEXT("CAM_CharacterFocus"))) CharacterFocusCameraActor = Cam;
+                else if (N.Equals(TEXT("CAM_EnemyCursor")))    EnemyCursorCameraActor    = Cam;
+                else if (N.Equals(TEXT("CAM_GunAim")))         GunAimCameraActor         = Cam;
+            }
+        }
+    }
+
+    // ── Teleport combatants to their spawn points ─────────────────────────────
+    {
+        TArray<ACombatantBase*> Players, Enemies;
+        for (ACombatantBase* C : Raw)
+        {
+            if (C->GetTeam() == ECombatTeam::Player) Players.Add(C);
+            else                                      Enemies.Add(C);
+        }
+
+        auto TeleportToSpawn = [this](ACombatantBase* C, AActor* SpawnPoint)
+        {
+            const FVector PadLoc = SpawnPoint->GetActorLocation();
+
+            // Trace straight down from high above to find whatever surface
+            // is directly above the pad's XY position (pad top or floor tile).
+            FHitResult Hit;
+            GetWorld()->LineTraceSingleByChannel(
+                Hit,
+                FVector(PadLoc.X, PadLoc.Y, 5000.f),
+                FVector(PadLoc.X, PadLoc.Y, -500.f),
+                ECC_WorldStatic,
+                FCollisionQueryParams(TEXT("SpawnTrace"), false, C));
+
+            const float SurfaceZ  = Hit.bBlockingHit ? Hit.ImpactPoint.Z : PadLoc.Z;
+            const float HalfHeight = C->CapsuleComponent
+                ? C->CapsuleComponent->GetScaledCapsuleHalfHeight()
+                : 90.f;
+
+            C->SetActorLocation(FVector(PadLoc.X, PadLoc.Y, SurfaceZ + HalfHeight));
+        };
+
+        for (int32 i = 0; i < Players.Num(); ++i)
+        {
+            if (PlayerSpawnPoints.IsValidIndex(i) && PlayerSpawnPoints[i])
+                TeleportToSpawn(Players[i], PlayerSpawnPoints[i]);
+        }
+
+        for (int32 i = 0; i < Enemies.Num(); ++i)
+        {
+            if (EnemySpawnPoints.IsValidIndex(i) && EnemySpawnPoints[i])
+                TeleportToSpawn(Enemies[i], EnemySpawnPoints[i]);
+        }
+    }
+
+    // ── Face combatants toward the opposing team ──────────────────────────────
+    {
+        FVector PlayerCenter = FVector::ZeroVector;
+        int32   PlayerCount  = 0;
+        FVector EnemyCenter  = FVector::ZeroVector;
+        int32   EnemyCount   = 0;
+
+        for (ACombatantBase* C : Raw)
+        {
+            if (C->GetTeam() == ECombatTeam::Player) { PlayerCenter += C->GetActorLocation(); ++PlayerCount; }
+            else                                      { EnemyCenter  += C->GetActorLocation(); ++EnemyCount;  }
+        }
+
+        if (PlayerCount > 0) PlayerCenter /= static_cast<float>(PlayerCount);
+        if (EnemyCount  > 0) EnemyCenter  /= static_cast<float>(EnemyCount);
+
+        for (ACombatantBase* C : Raw)
+        {
+            const FVector LookAt = (C->GetTeam() == ECombatTeam::Player) ? EnemyCenter : PlayerCenter;
+            const FVector Dir    = (LookAt - C->GetActorLocation()).GetSafeNormal2D();
+            if (!Dir.IsNearlyZero())
+            {
+                C->SetActorRotation(Dir.Rotation());
+            }
+        }
+    }
+
     Phase_StartNextTurn();
 }
 
@@ -141,12 +253,18 @@ void ABattleManager::Phase_StartNextTurn()
 
     if (IsPlayerTurn())
     {
+        // Blend camera to frame the active player character.
+        FocusCameraOnPlayer(ActiveCombatant);
+
         OnTurnOwnerChanged(true);
         RebuildPlayerCursorList(ActiveCombatant);
         SetPhase(EBattlePhase::AwaitingInput);
     }
     else
     {
+        // Enemy turn — return to the static overview camera.
+        ReturnCameraToBase();
+
         // Clear player cursor during enemy turn.
         ActivePlayerCombatant = nullptr;
         PlayerCursorList.Empty();
@@ -180,6 +298,12 @@ void ABattleManager::Phase_ExecutePlayerAction(int32 AbilityIndex,
         Ability->ActiveMultiplier = PendingDamageMultiplier;
     }
     PendingDamageMultiplier = 1.0f; // always reset, regardless of success
+
+    // Trigger the matching animation before the ability resolves.
+    if (const UCombatAbility* Ability = ActiveCombatant->AbilityManager->GetAbility(AbilityIndex))
+    {
+        ActiveCombatant->PlayAbilityAnimation(Ability->AbilityCategory);
+    }
 
     const bool bActivated = ActiveCombatant->AbilityManager->TryActivateAbility(AbilityIndex, Targets);
     if (!bActivated)
@@ -220,6 +344,12 @@ void ABattleManager::Phase_ExecuteEnemyAction()
         Targets = { ActiveCombatant };
     else
         Targets = { Candidates[FMath::RandRange(0, Candidates.Num() - 1)] };
+
+    // Trigger animation for the enemy's ability.
+    if (Ability)
+    {
+        ActiveCombatant->PlayAbilityAnimation(Ability->AbilityCategory);
+    }
 
     ActiveCombatant->AbilityManager->TryActivateAbility(0, Targets);
 
@@ -377,6 +507,12 @@ void ABattleManager::NavigateTargets(int32 Direction)
     }
 
     OnTargetSelectionChanged.Broadcast(GetCurrentTarget());
+
+    // Snap camera to the newly highlighted target if targeting a single enemy.
+    if (PendingScope == ETargetScope::SingleEnemy)
+    {
+        FocusCameraOnEnemy(GetCurrentTarget(), 0.20f);
+    }
 }
 
 void ABattleManager::ConfirmTargetSelection()
@@ -469,6 +605,9 @@ void ABattleManager::CancelTargetSelection()
     TargetCandidateIndex = 0;
 
     SetPhase(EBattlePhase::AwaitingInput);
+
+    // Return camera to the active player character.
+    if (ActiveCombatant) { FocusCameraOnPlayer(ActiveCombatant, 0.40f); }
 }
 
 void ABattleManager::CancelPendingMinigameSkill()
@@ -577,6 +716,9 @@ UCombatHUDWidget* ABattleManager::CreateAndShowHUD(APlayerController* PC)
 {
     if (!HUDClass || !PC) { return nullptr; }
 
+    // Cache the player controller for camera blending and gun aim.
+    CachedPlayerController = PC;
+
     CombatHUD = CreateWidget<UCombatHUDWidget>(PC, HUDClass);
     if (CombatHUD)
     {
@@ -661,6 +803,263 @@ void ABattleManager::RebuildPlayerCursorList(ACombatantBase* DefaultUnit)
     OnActivePlayerChanged.Broadcast(ActivePlayerCombatant.Get());
 }
 
+// -----------------------------------------------------------------------------
+//  Camera system
+// -----------------------------------------------------------------------------
+
+void ABattleManager::FocusCameraOnPlayer(ACombatantBase* Player, float BlendTime)
+{
+    if (!CharacterFocusCameraActor || !Player || !CachedPlayerController) { return; }
+    PositionCharacterFocusCamera(Player);
+    CachedPlayerController->SetViewTargetWithBlend(
+        CharacterFocusCameraActor, BlendTime, VTBlend_Cubic);
+}
+
+void ABattleManager::FocusCameraOnEnemy(ACombatantBase* Enemy, float BlendTime)
+{
+    if (!EnemyCursorCameraActor || !Enemy || !CachedPlayerController) { return; }
+    PositionEnemyCursorCamera(Enemy);
+    CachedPlayerController->SetViewTargetWithBlend(
+        EnemyCursorCameraActor, BlendTime, VTBlend_Cubic);
+}
+
+void ABattleManager::ReturnCameraToBase(float BlendTime)
+{
+    if (!BaseCameraActor || !CachedPlayerController) { return; }
+    CachedPlayerController->SetViewTargetWithBlend(
+        BaseCameraActor, BlendTime, VTBlend_Cubic);
+}
+
+void ABattleManager::PositionCharacterFocusCamera(ACombatantBase* Target)
+{
+    if (!CharacterFocusCameraActor || !Target) { return; }
+
+    const FVector CharLoc = Target->GetActorLocation();
+    const FVector Forward = Target->GetActorForwardVector(); // toward enemies
+    const FVector Right   = Target->GetActorRightVector();
+
+    // Place camera behind the character, to their right (so character appears
+    // slightly left-of-centre in frame), and elevated for a good JRPG angle.
+    const FVector CamPos = CharLoc
+        - Forward * 200.f
+        + Right   * 150.f
+        + FVector(0.f, 0.f, 160.f);
+
+    const FVector  LookAt  = CharLoc + FVector(0.f, 0.f, 50.f);
+    const FRotator CamRot  = (LookAt - CamPos).Rotation();
+
+    CharacterFocusCameraActor->SetActorLocationAndRotation(CamPos, CamRot);
+}
+
+void ABattleManager::PositionEnemyCursorCamera(ACombatantBase* Target)
+{
+    if (!EnemyCursorCameraActor || !Target) { return; }
+
+    const FVector EnemyLoc = Target->GetActorLocation();
+    const FVector EnemyFwd = Target->GetActorForwardVector(); // toward players
+
+    // Position the camera between the two parties, slightly in front of the
+    // enemy (on the player-team side), at head height.
+    const FVector CamPos = EnemyLoc
+        + EnemyFwd * 220.f
+        + FVector(0.f, 0.f, 90.f);
+
+    const FVector  LookAt = EnemyLoc + FVector(0.f, 0.f, 30.f);
+    const FRotator CamRot = (LookAt - CamPos).Rotation();
+
+    EnemyCursorCameraActor->SetActorLocationAndRotation(CamPos, CamRot);
+}
+
+void ABattleManager::PositionGunAimCamera(ACombatantBase* Player)
+{
+    if (!GunAimCameraActor || !Player) { return; }
+
+    const FVector CharLoc = Player->GetActorLocation();
+    const FVector Forward = Player->GetActorForwardVector();
+    const FVector Right   = Player->GetActorRightVector();
+
+    // Tight over-the-shoulder on the right side, close to the character.
+    const FVector CamPos = CharLoc
+        + Forward * 60.f
+        + Right   * 65.f
+        + FVector(0.f, 0.f, 100.f);
+
+    // Aim down the character's forward vector (toward enemies).
+    GunAimCameraActor->SetActorLocationAndRotation(CamPos, Forward.Rotation());
+    GunAimBaseRotation = Forward.Rotation();
+}
+
+// -----------------------------------------------------------------------------
+//  Gun aim mode
+// -----------------------------------------------------------------------------
+
+void ABattleManager::BeginGunAimMode()
+{
+    if (bGunAimActive) { return; }
+    if (!ActiveCombatant || ActiveCombatant->GetTeam() != ECombatTeam::Player) { return; }
+    if (CurrentPhase != EBattlePhase::AwaitingInput) { return; }
+
+    bGunAimActive     = true;
+    GunAimYawOffset   = 0.f;
+    GunAimPitchOffset = 0.f;
+
+    PositionGunAimCamera(ActiveCombatant);
+
+    if (GunAimCameraActor && CachedPlayerController)
+    {
+        CachedPlayerController->SetViewTargetWithBlend(
+            GunAimCameraActor, 0.20f, VTBlend_Cubic);
+        CachedPlayerController->bShowMouseCursor = false;
+    }
+
+    OnGunAimChanged.Broadcast(true);
+}
+
+void ABattleManager::EndGunAimMode()
+{
+    if (!bGunAimActive) { return; }
+
+    bGunAimActive     = false;
+    GunAimYawOffset   = 0.f;
+    GunAimPitchOffset = 0.f;
+
+    // Restore cursor visibility.
+    if (CachedPlayerController)
+    {
+        CachedPlayerController->bShowMouseCursor = true;
+    }
+
+    // Return camera to the acting player character.
+    if (ActiveCombatant) { FocusCameraOnPlayer(ActiveCombatant, 0.30f); }
+    else                 { ReturnCameraToBase(0.30f); }
+
+    OnGunAimChanged.Broadcast(false);
+}
+
+void ABattleManager::UpdateGunAimRotation(float DeltaYaw, float DeltaPitch)
+{
+    if (!bGunAimActive || !GunAimCameraActor) { return; }
+
+    GunAimYawOffset = FMath::Clamp(
+        GunAimYawOffset   + DeltaYaw   * GunAimSensitivity,
+        -GunAimYawLimit,   GunAimYawLimit);
+
+    GunAimPitchOffset = FMath::Clamp(
+        GunAimPitchOffset + DeltaPitch * GunAimSensitivity,
+        GunAimPitchMin,    GunAimPitchMax);
+
+    const FRotator NewRot(
+        GunAimBaseRotation.Pitch + GunAimPitchOffset,
+        GunAimBaseRotation.Yaw   + GunAimYawOffset,
+        0.f);
+
+    GunAimCameraActor->SetActorRotation(NewRot);
+}
+
+void ABattleManager::FireGunAimShot()
+{
+    if (!bGunAimActive || !ActiveCombatant || !GunAimCameraActor) { return; }
+
+    // Find the gun ability on the active combatant.
+    UAbilityManagerComponent* AM = ActiveCombatant->AbilityManager;
+    if (!AM) { return; }
+
+    int32 GunAbilIdx = -1;
+    for (int32 i = 0; i < AM->GetAbilityCount(); ++i)
+    {
+        const UCombatAbility* A = AM->GetAbility(i);
+        if (A && A->AbilityCategory == EAbilityCategory::Gun)
+        {
+            GunAbilIdx = i;
+            break;
+        }
+    }
+
+    if (GunAbilIdx == -1)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[BattleManager] FireGunAimShot: no Gun ability on %s."),
+            *ActiveCombatant->GetName());
+        EndGunAimMode();
+        return;
+    }
+
+    const UCombatAbility* GunAbil = AM->GetAbility(GunAbilIdx);
+    if (!GunAbil) { EndGunAimMode(); return; }
+
+    // Check affordability.
+    bool bCanAfford = true;
+    for (const FAbilityCost& Cost : GunAbil->Costs)
+    {
+        if (!ActiveCombatant->CanAffordCost(Cost)) { bCanAfford = false; break; }
+    }
+    if (!bCanAfford)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[BattleManager] FireGunAimShot: cannot afford cost."));
+        EndGunAimMode();
+        return;
+    }
+
+    // Line trace from the aim camera forward.
+    FHitResult Hit;
+    const FVector TraceStart = GunAimCameraActor->GetActorLocation();
+    const FVector TraceEnd   = TraceStart + GunAimCameraActor->GetActorForwardVector() * 8000.f;
+
+    FCollisionQueryParams Params(TEXT("GunShot"), /*bTraceComplex=*/false);
+    Params.AddIgnoredActor(this);
+    Params.AddIgnoredActor(ActiveCombatant);
+
+    ACombatantBase* HitEnemy = nullptr;
+    if (GetWorld()->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility, Params))
+    {
+        if (ACombatantBase* HitC = Cast<ACombatantBase>(Hit.GetActor()))
+        {
+            if (HitC->GetTeam() == ECombatTeam::Enemy && !HitC->IsDead())
+            {
+                HitEnemy = HitC;
+            }
+        }
+    }
+
+    // Play gun animation.
+    ActiveCombatant->PlayAbilityAnimation(EAbilityCategory::Gun);
+
+    if (HitEnemy)
+    {
+        // Hit — run the full ability pipeline (handles cost + damage).
+        UE_LOG(LogTemp, Log, TEXT("[BattleManager] Gun shot HIT: %s"), *HitEnemy->GetName());
+        AM->TryActivateAbility(GunAbilIdx, { HitEnemy });
+    }
+    else
+    {
+        // Miss — only spend the resource costs.
+        UE_LOG(LogTemp, Log, TEXT("[BattleManager] Gun shot MISSED."));
+        for (const FAbilityCost& Cost : GunAbil->Costs)
+        {
+            ActiveCombatant->SpendResource(Cost.ResourceType, Cost.Amount);
+        }
+    }
+
+    if (TryResolveBattleEnd()) { EndGunAimMode(); ActiveCombatant = nullptr; return; }
+
+    // Check whether the player can afford another shot.
+    // If not, exit aim mode so the HUD reflects the empty-AP state.
+    // If yes, stay in aim mode — the player can keep shooting while holding RMB.
+    bool bCanAffordNext = true;
+    for (const FAbilityCost& Cost : GunAbil->Costs)
+    {
+        if (!ActiveCombatant->CanAffordCost(Cost)) { bCanAffordNext = false; break; }
+    }
+    if (!bCanAffordNext)
+    {
+        EndGunAimMode();
+    }
+    // GunShot has bEndsTurn = false → player stays in AwaitingInput.
+}
+
+// -----------------------------------------------------------------------------
+//  (existing helpers continue below)
+// -----------------------------------------------------------------------------
+
 void ABattleManager::EnterTargetSelectionWithCandidates(ETargetScope Scope,
                                                          TArray<ACombatantBase*>&& Candidates)
 {
@@ -672,4 +1071,10 @@ void ABattleManager::EnterTargetSelectionWithCandidates(ETargetScope Scope,
 
     SetPhase(EBattlePhase::SelectingTarget);
     OnTargetSelectionChanged.Broadcast(GetCurrentTarget());
+
+    // Move camera to the first highlighted target when targeting an enemy.
+    if (PendingScope == ETargetScope::SingleEnemy)
+    {
+        FocusCameraOnEnemy(GetCurrentTarget(), 0.40f);
+    }
 }

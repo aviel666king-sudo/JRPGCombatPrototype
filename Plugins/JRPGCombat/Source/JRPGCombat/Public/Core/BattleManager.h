@@ -9,10 +9,19 @@ class ACombatantBase;
 class UTurnOrderManager;
 class UCombatHUDWidget;
 class UProtocolManagerComponent;
+class ACameraActor;
+class APlayerController;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPhaseChanged,        EBattlePhase,    NewPhase);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCombatantTurn,       ACombatantBase*, ActiveCombatant);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnBattleEnded,         bool,            bVictory);
+
+/**
+ * Fired when the player enters or exits gun aim mode.
+ * bAiming = true  → HUD should show crosshair, hide action panel.
+ * bAiming = false → HUD should hide crosshair, show action panel.
+ */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnGunAimChanged, bool, bAiming);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTargetChanged,       ACombatantBase*, NewTarget);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnActivePlayerChanged, ACombatantBase*, NewActivePlayer);
 
@@ -54,6 +63,88 @@ public:
     // -------------------------------------------------------------------------
     //  Setup
     // -------------------------------------------------------------------------
+
+    // -------------------------------------------------------------------------
+    //  Spawn points
+    //  Assign level actors (e.g. the grass pads) here.
+    //  On battle start each combatant is teleported to their matching slot.
+    //  Index 0 = first player/enemy, index 1 = second, etc.
+    //  If an index has no spawn point the combatant stays where it is.
+    // -------------------------------------------------------------------------
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle|Setup")
+    TArray<TObjectPtr<AActor>> PlayerSpawnPoints;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle|Setup")
+    TArray<TObjectPtr<AActor>> EnemySpawnPoints;
+
+    // -------------------------------------------------------------------------
+    //  Camera system
+    //  Assign these four actors from the level in the BattleManager Details
+    //  panel.  CharacterFocus, EnemyCursor and GunAim are repositioned at
+    //  runtime — just place them anywhere in the level.
+    // -------------------------------------------------------------------------
+
+    /** Static overview camera used during enemy turns and between turns. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle|Camera")
+    TObjectPtr<ACameraActor> BaseCameraActor;
+
+    /** Repositioned each player turn to frame the acting character. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle|Camera")
+    TObjectPtr<ACameraActor> CharacterFocusCameraActor;
+
+    /** Snaps between enemies while the player navigates targets. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle|Camera")
+    TObjectPtr<ACameraActor> EnemyCursorCameraActor;
+
+    /** Over-the-shoulder camera used during gun aim mode. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle|Camera")
+    TObjectPtr<ACameraActor> GunAimCameraActor;
+
+    // -------------------------------------------------------------------------
+    //  Gun aim mode
+    // -------------------------------------------------------------------------
+
+    /**
+     * Enter first-person gun aim mode.
+     * Called by the HUD when the player holds RMB.
+     * Blends to GunAimCameraActor and hides the system cursor.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Battle|Gun")
+    void BeginGunAimMode();
+
+    /**
+     * Exit gun aim mode without firing.
+     * Called by the HUD when the player releases RMB.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Battle|Gun")
+    void EndGunAimMode();
+
+    /**
+     * Fire one shot in the current aim direction.
+     * Performs a line trace; damages the enemy on hit.
+     * AP is spent regardless of whether the shot hits.
+     * Called by the HUD on LMB while RMB is held.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Battle|Gun")
+    void FireGunAimShot();
+
+    /**
+     * Called from WBP_CombatHUD's Tick while gun aim is active.
+     * DeltaYaw / DeltaPitch are raw pixel deltas from screen centre.
+     * Sensitivity is applied internally.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Battle|Gun")
+    void UpdateGunAimRotation(float DeltaYaw, float DeltaPitch);
+
+    /** Mouse sensitivity multiplier for gun aim rotation (degrees per pixel). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle|Gun",
+              meta = (ClampMin = "0.01", ClampMax = "2.0"))
+    float GunAimSensitivity = 0.12f;
+
+    /** True while the player is in gun aim mode. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Battle|Gun")
+    bool IsGunAimActive() const { return bGunAimActive; }
 
     UFUNCTION(BlueprintCallable, Category = "Battle")
     void StartBattle(const TArray<ACombatantBase*>& PlayerParty,
@@ -247,6 +338,14 @@ public:
     FOnEnemyActingChanged OnEnemyActingChanged;
 
     /**
+     * Fired when the player enters (true) or exits (false) gun aim mode.
+     * WBP_CombatHUD subscribes to show/hide the crosshair overlay and
+     * hide/restore the action panel.
+     */
+    UPROPERTY(BlueprintAssignable, Category = "Battle|Events")
+    FOnGunAimChanged OnGunAimChanged;
+
+    /**
      * Fired after the player confirms a target for a Skill that has a MinigameClass.
      * AbilityIndex identifies which skill was selected.
      * CombatActionPanelWidget subscribes here, creates the minigame widget, and runs it.
@@ -349,6 +448,31 @@ private:
     FTimerHandle EnemyPreActionTimerHandle;
     FTimerHandle EnemyPostActionTimerHandle;
 
-    static constexpr float EnemyPreActionDelay  = 0.8f;   // slightly longer for readability
+    static constexpr float EnemyPreActionDelay  = 0.8f;
     static constexpr float EnemyPostActionDelay = 1.0f;
+
+    // ─── Camera helpers ──────────────────────────────────────────────────────
+
+    /** Cached on CreateAndShowHUD; used for SetViewTargetWithBlend calls. */
+    UPROPERTY()
+    TObjectPtr<APlayerController> CachedPlayerController;
+
+    void FocusCameraOnPlayer(ACombatantBase* Player,  float BlendTime = 0.5f);
+    void FocusCameraOnEnemy (ACombatantBase* Enemy,   float BlendTime = 0.3f);
+    void ReturnCameraToBase (float BlendTime = 0.5f);
+
+    void PositionCharacterFocusCamera(ACombatantBase* Target);
+    void PositionEnemyCursorCamera   (ACombatantBase* Target);
+    void PositionGunAimCamera        (ACombatantBase* Player);
+
+    // ─── Gun aim state ───────────────────────────────────────────────────────
+
+    bool    bGunAimActive     = false;
+    float   GunAimYawOffset   = 0.f;
+    float   GunAimPitchOffset = 0.f;
+    FRotator GunAimBaseRotation;
+
+    static constexpr float GunAimYawLimit  = 50.f;   // ±50° → 100° total
+    static constexpr float GunAimPitchMin  = -25.f;
+    static constexpr float GunAimPitchMax  =  30.f;
 };

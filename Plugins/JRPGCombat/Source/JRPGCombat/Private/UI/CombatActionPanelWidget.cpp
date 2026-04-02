@@ -23,7 +23,8 @@ void UCombatActionPanelWidget::NativeConstruct()
 
     // ── Bind main-menu buttons ────────────────────────────────────────────────
     if (MeleeButton)    { MeleeButton->OnClicked.AddDynamic(this,    &UCombatActionPanelWidget::OnMeleeClicked); }
-    if (GunButton)      { GunButton->OnClicked.AddDynamic(this,      &UCombatActionPanelWidget::OnGunClicked); }
+    // GunButton is intentionally not bound — gun aim is now triggered by holding RMB,
+    // not by clicking a button. The button stays as a visual hint ("Hold RMB to Aim").
     if (SkillButton)    { SkillButton->OnClicked.AddDynamic(this,    &UCombatActionPanelWidget::OnSkillMenuClicked); }
     if (ProtocolButton) { ProtocolButton->OnClicked.AddDynamic(this, &UCombatActionPanelWidget::OnProtocolMenuClicked); }
     if (SkipTurnButton) { SkipTurnButton->OnClicked.AddDynamic(this, &UCombatActionPanelWidget::OnSkipTurnClicked); }
@@ -36,6 +37,9 @@ void UCombatActionPanelWidget::NativeConstruct()
     if (HealingButton)      { HealingButton->OnClicked.AddDynamic(this,      &UCombatActionPanelWidget::OnHealingProtocolClicked); }
     if (RevivalButton)      { RevivalButton->OnClicked.AddDynamic(this,      &UCombatActionPanelWidget::OnRevivalProtocolClicked); }
     if (APButton)           { APButton->OnClicked.AddDynamic(this,           &UCombatActionPanelWidget::OnAPProtocolClicked); }
+
+    // ── Bind target selection cancel button ───────────────────────────────────
+    if (BackButtonTarget) { BackButtonTarget->OnClicked.AddDynamic(this, &UCombatActionPanelWidget::OnBackFromTargetClicked); }
 
     // Start inactive until a player turn begins.
     SetMenuState(ECombatMenuState::Inactive);
@@ -125,6 +129,15 @@ void UCombatActionPanelWidget::SetMenuState(ECombatMenuState NewState)
         case ECombatMenuState::ProtocolMenu:
             RefreshProtocolMenu();
             break;
+        case ECombatMenuState::SelectingTarget:
+            // Recapture HUD keyboard focus as soon as we enter target selection.
+            // This covers the common path where focus was never lost, and also
+            // pre-empts the alt-tab scenario so input works immediately.
+            if (OwnerHUD.IsValid())
+            {
+                if (APlayerController* PC = GetOwningPlayer()) { OwnerHUD->SetUserFocus(PC); }
+            }
+            break;
         default:
             break;
     }
@@ -165,7 +178,7 @@ bool UCombatActionPanelWidget::HandleKeyDown(const FKey& Key)
         case ECombatMenuState::MainMenu:
         {
             if (Key == EKeys::One)   { OnMeleeClicked();        return true; }
-            if (Key == EKeys::Two)   { OnGunClicked();           return true; }
+            // [2] removed — gun aim is now triggered by holding RMB
             if (Key == EKeys::Three) { OnSkillMenuClicked();     return true; }
             if (Key == EKeys::Four)  { OnProtocolMenuClicked();  return true; }
             if (Key == EKeys::T)     { OnSkipTurnClicked();      return true; }
@@ -287,14 +300,8 @@ void UCombatActionPanelWidget::RefreshMainMenuButtons()
         MeleeButton->SetIsEnabled(bCanMelee);
     }
 
-    // Gun — enabled if acting character has a tagged Gun ability and can afford it.
-    if (GunButton)
-    {
-        const int32 Idx = FindGunAbilityIndex();
-        const bool bCanGun = Idx >= 0 && Actor &&
-                             Actor->AbilityManager->CanActivateAbility(Idx);
-        GunButton->SetIsEnabled(bCanGun);
-    }
+    // Gun — displayed as a passive "Hold RMB to Aim" hint; always non-interactive.
+    if (GunButton) { GunButton->SetIsEnabled(false); }
 
     // Skill — enabled if at least one Skill-category ability is available.
     if (SkillButton)
@@ -505,6 +512,19 @@ void UCombatActionPanelWidget::OnBackFromProtocolClicked()
 {
     SetMenuState(ECombatMenuState::MainMenu);
     // Same focus-theft issue as OnBackFromSkillClicked — recapture HUD focus.
+    if (OwnerHUD.IsValid())
+    {
+        if (APlayerController* PC = GetOwningPlayer()) { OwnerHUD->SetUserFocus(PC); }
+    }
+}
+
+void UCombatActionPanelWidget::OnBackFromTargetClicked()
+{
+    ABattleManager* BM = BattleManager.Get();
+    if (BM) { BM->CancelTargetSelection(); }
+    SetMenuState(PreTargetState);
+    // Recapture HUD focus — clicking the button will have stolen Slate focus
+    // from the HUD, so we restore it immediately so keyboard shortcuts resume.
     if (OwnerHUD.IsValid())
     {
         if (APlayerController* PC = GetOwningPlayer()) { OwnerHUD->SetUserFocus(PC); }

@@ -10,6 +10,6 @@ AEnemyCombatant::AEnemyCombatant()
     {
         static ConstructorHelpers::FObjectFinder<USkeletalMesh> QuinnSK(
             TEXT("/Game/Characters/Mannequins/Meshes/SKM_Quinn_Simple.SKM_Quinn_Simple"));
-        if (QuinnSK.Succeeded() && Mesh) { Mesh->SetSkeletalMesh(QuinnSK.Object); }
+        if (QuinnSK.Succeeded() && Mesh) { Mesh->SetSkeletalMeshAsset(QuinnSK.Object); }
     }
 }

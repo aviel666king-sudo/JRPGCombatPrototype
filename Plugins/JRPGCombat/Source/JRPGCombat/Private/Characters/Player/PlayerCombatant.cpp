@@ -11,7 +11,7 @@ APlayerCombatant::APlayerCombatant()
     {
         static ConstructorHelpers::FObjectFinder<USkeletalMesh> MannySK(
             TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple"));
-        if (MannySK.Succeeded() && Mesh) { Mesh->SetSkeletalMesh(MannySK.Object); }
+        if (MannySK.Succeeded() && Mesh) { Mesh->SetSkeletalMeshAsset(MannySK.Object); }
     }
 
     // ── Player-exclusive montages ─────────────────────────────────────────────

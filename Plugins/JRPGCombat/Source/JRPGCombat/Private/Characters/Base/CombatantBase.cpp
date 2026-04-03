@@ -9,6 +9,7 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
+#include "UObject/ConstructorHelpers.h"
 
 ACombatantBase::ACombatantBase()
 {
@@ -35,6 +36,35 @@ ACombatantBase::ACombatantBase()
     Mesh->SetRelativeLocation(FVector(0.0f, 0.0f, -90.0f));
     Mesh->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
     Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+    // ── Shared anim blueprint (same for all combatants) ───────────────────────
+    {
+        static ConstructorHelpers::FClassFinder<UAnimInstance> AnimBP(
+            TEXT("/Game/Characters/Mannequins/Anims/ABP_CombatCharacter.ABP_CombatCharacter_C"));
+        if (AnimBP.Succeeded()) { Mesh->SetAnimInstanceClass(AnimBP.Class); }
+    }
+
+    // ── Shared montages (same for all combatants) ─────────────────────────────
+    {
+        static ConstructorHelpers::FObjectFinder<UAnimMontage> Attack(
+            TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Attack/AM_Attack.AM_Attack"));
+        if (Attack.Succeeded()) { AttackMontage = Attack.Object; }
+    }
+    {
+        static ConstructorHelpers::FObjectFinder<UAnimMontage> Cast(
+            TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Attack/AM_Cast.AM_Cast"));
+        if (Cast.Succeeded()) { CastMontage = Cast.Object; }
+    }
+    {
+        static ConstructorHelpers::FObjectFinder<UAnimMontage> HitReact(
+            TEXT("/Game/Characters/Mannequins/Anims/Rifle/HitReact/AM_HitReact.AM_HitReact"));
+        if (HitReact.Succeeded()) { HitReactMontage = HitReact.Object; }
+    }
+    {
+        static ConstructorHelpers::FObjectFinder<UAnimMontage> Death(
+            TEXT("/Game/Characters/Mannequins/Anims/Death/AM_Death.AM_Death"));
+        if (Death.Succeeded()) { DeathMontage = Death.Object; }
+    }
 
     // -------------------------------------------------------------------------
     //  Combat components

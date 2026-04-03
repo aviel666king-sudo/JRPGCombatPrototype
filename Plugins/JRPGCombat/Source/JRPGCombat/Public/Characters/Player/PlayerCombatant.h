@@ -28,10 +28,7 @@ class JRPGCOMBAT_API APlayerCombatant : public ACombatantBase
 
 public:
 
-    APlayerCombatant()
-    {
-        Team = ECombatTeam::Player;
-    }
+    APlayerCombatant();
 
     // Player-exclusive animation slots
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combatant|Animation")

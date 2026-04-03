@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "Components/Widget.h"
 #include "CombatTypes.h"
 #include "CombatHUDWidget.generated.h"
 
@@ -11,7 +12,6 @@ class UUnitStatusWidget;
 class UTurnInfoWidget;
 class UCombatActionPanelWidget;
 class UPanelWidget;
-class UWidget;
 
 /**
  * UCombatHUDWidget

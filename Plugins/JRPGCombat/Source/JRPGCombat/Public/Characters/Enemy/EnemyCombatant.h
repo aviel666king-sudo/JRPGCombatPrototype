@@ -26,8 +26,5 @@ class JRPGCOMBAT_API AEnemyCombatant : public ACombatantBase
 
 public:
 
-    AEnemyCombatant()
-    {
-        Team = ECombatTeam::Enemy;
-    }
+    AEnemyCombatant();
 };

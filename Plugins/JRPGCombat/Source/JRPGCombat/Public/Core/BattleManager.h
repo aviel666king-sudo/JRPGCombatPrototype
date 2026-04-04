@@ -140,7 +140,7 @@ public:
     /** Mouse sensitivity multiplier for gun aim rotation (degrees per pixel). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle|Gun",
               meta = (ClampMin = "0.01", ClampMax = "2.0"))
-    float GunAimSensitivity = 0.12f;
+    float GunAimSensitivity = 0.05f;
 
     /** True while the player is in gun aim mode. */
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Battle|Gun")

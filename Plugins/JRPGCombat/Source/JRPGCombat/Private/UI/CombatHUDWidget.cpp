@@ -328,10 +328,17 @@ void UCombatHUDWidget::NativeTick(const FGeometry& AllottedGeometry, float InDel
     const float DX = CursorPos.X - ScreenCenter.X;
     const float DY = CursorPos.Y - ScreenCenter.Y;
 
+    if (bSkipNextAimTick)
+    {
+        bSkipNextAimTick = false;
+        return;
+    }
+
     if (FMath::Abs(DX) > 0.5f || FMath::Abs(DY) > 0.5f)
     {
         BM->UpdateGunAimRotation(DX, -DY);
         FSlateApplication::Get().SetCursorPos(ScreenCenter);
+        bSkipNextAimTick = true;
     }
 }
 

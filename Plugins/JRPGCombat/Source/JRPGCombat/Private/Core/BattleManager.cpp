@@ -998,6 +998,9 @@ void ABattleManager::FireGunAimShot()
     bool bCanAfford = true;
     for (const FAbilityCost& Cost : GunAbil->Costs)
     {
+        const float Have = ActiveCombatant->GetCurrentResource(Cost.ResourceType);
+        UE_LOG(LogTemp, Warning, TEXT("[BattleManager] GunShot cost check: resource=%s need=%.1f have=%.1f"),
+            *UEnum::GetValueAsString(Cost.ResourceType), Cost.Amount, Have);
         if (!ActiveCombatant->CanAffordCost(Cost)) { bCanAfford = false; break; }
     }
     if (!bCanAfford)

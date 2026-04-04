@@ -142,6 +142,9 @@ private:
     /** True while the player is holding RMB and gun aim is active. */
     bool bGunAimInputActive = false;
 
+    /** Skip one tick after cursor reset to avoid opposite-direction oscillation. */
+    bool bSkipNextAimTick = false;
+
     /** Fired by BattleManager::OnGunAimChanged — shows/hides crosshair,
      *  hides cursor, centers mouse, dims the action panel. */
     UFUNCTION()

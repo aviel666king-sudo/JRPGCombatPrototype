@@ -313,27 +313,25 @@ void UCombatHUDWidget::NativeTick(const FGeometry& AllottedGeometry, float InDel
     APlayerController* PC = GetOwningPlayer();
     if (!PC) { return; }
 
-    int32 VX = 0, VY = 0;
-    PC->GetViewportSize(VX, VY);
+    // Use screen-space cursor position so warping works correctly in PIE.
+    if (!GEngine || !GEngine->GameViewport) { return; }
 
-    const float CX = VX * 0.5f;
-    const float CY = VY * 0.5f;
+    FVector2D ViewportSize;
+    GEngine->GameViewport->GetViewportSize(ViewportSize);
 
-    float MX = 0.f, MY = 0.f;
-    if (PC->GetMousePosition(MX, MY))
+    TSharedPtr<SWindow> Window = GEngine->GameViewport->GetWindow();
+    if (!Window.IsValid()) { return; }
+
+    const FVector2D ScreenCenter = Window->GetPositionInScreen() + ViewportSize * 0.5f;
+    const FVector2D CursorPos    = FSlateApplication::Get().GetCursorPos();
+
+    const float DX = CursorPos.X - ScreenCenter.X;
+    const float DY = CursorPos.Y - ScreenCenter.Y;
+
+    if (FMath::Abs(DX) > 0.5f || FMath::Abs(DY) > 0.5f)
     {
-        const float DX = MX - CX;
-        const float DY = MY - CY;
-
-        // Only update if the cursor actually moved (avoids micro-jitter from warp).
-        if (FMath::Abs(DX) > 0.5f || FMath::Abs(DY) > 0.5f)
-        {
-            // DY is inverted: moving the mouse down tilts the camera up naturally.
-            BM->UpdateGunAimRotation(DX, -DY);
-
-            // Warp cursor back to center so it never hits the screen edge.
-            PC->SetMouseLocation(FMath::RoundToInt(CX), FMath::RoundToInt(CY));
-        }
+        BM->UpdateGunAimRotation(DX, -DY);
+        FSlateApplication::Get().SetCursorPos(ScreenCenter);
     }
 }
 
@@ -372,11 +370,16 @@ void UCombatHUDWidget::OnGunAimModeChanged(bool bAiming)
     if (APlayerController* PC = GetOwningPlayer())
     {
         PC->bShowMouseCursor = !bAiming;
-        if (bAiming)
+        if (bAiming && GEngine && GEngine->GameViewport)
         {
-            int32 VX = 0, VY = 0;
-            PC->GetViewportSize(VX, VY);
-            PC->SetMouseLocation(VX / 2, VY / 2);
+            FVector2D ViewportSize;
+            GEngine->GameViewport->GetViewportSize(ViewportSize);
+            TSharedPtr<SWindow> Window = GEngine->GameViewport->GetWindow();
+            if (Window.IsValid())
+            {
+                FSlateApplication::Get().SetCursorPos(
+                    Window->GetPositionInScreen() + ViewportSize * 0.5f);
+            }
         }
     }
 }

@@ -146,6 +146,14 @@ public:
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Battle|Gun")
     bool IsGunAimActive() const { return bGunAimActive; }
 
+    /** Current horizontal aim offset in degrees (clamped to ±GunAimYawLimit). */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Battle|Gun")
+    float GetGunAimYaw() const { return GunAimYawOffset; }
+
+    /** Current vertical aim offset in degrees (clamped to GunAimPitchMin/Max). */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Battle|Gun")
+    float GetGunAimPitch() const { return GunAimPitchOffset; }
+
     UFUNCTION(BlueprintCallable, Category = "Battle")
     void StartBattle(const TArray<ACombatantBase*>& PlayerParty,
                      const TArray<ACombatantBase*>& EnemyParty);

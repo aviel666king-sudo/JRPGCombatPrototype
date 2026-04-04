@@ -1,6 +1,8 @@
 #include "Animation/CombatAnimInstance.h"
 #include "Characters/Base/CombatantBase.h"
 #include "Animation/AnimMontage.h"
+#include "Core/BattleManager.h"
+#include "EngineUtils.h"
 
 // -----------------------------------------------------------------------------
 //  UAnimInstance overrides
@@ -13,6 +15,25 @@ void UCombatAnimInstance::NativeInitializeAnimation()
     OwnerCombatant = Cast<ACombatantBase>(GetOwningActor());
 
     OnMontageEnded.AddDynamic(this, &UCombatAnimInstance::HandleMontageEnded);
+}
+
+void UCombatAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
+{
+    Super::NativeUpdateAnimation(DeltaSeconds);
+
+    // Only the player character needs gun aim data — skip enemies.
+    if (!OwnerCombatant || OwnerCombatant->GetTeam() != ECombatTeam::Player) { return; }
+
+    UWorld* World = GetWorld();
+    if (!World) { return; }
+
+    for (TActorIterator<ABattleManager> It(World); It; ++It)
+    {
+        bIsGunAiming  = (*It)->IsGunAimActive();
+        GunAimYaw     = bIsGunAiming ? (*It)->GetGunAimYaw()   : 0.f;
+        GunAimPitch   = bIsGunAiming ? (*It)->GetGunAimPitch() : 0.f;
+        break;
+    }
 }
 
 void UCombatAnimInstance::NativeUninitializeAnimation()

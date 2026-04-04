@@ -57,6 +57,18 @@ public:
     UPROPERTY(BlueprintReadOnly, Category = "Combat|Animation")
     ECombatAnimState CombatState = ECombatAnimState::Idle;
 
+    /** True while the player is holding gun aim (RMB). Drives ADS blend in AnimBP. */
+    UPROPERTY(BlueprintReadOnly, Category = "Combat|GunAim")
+    bool bIsGunAiming = false;
+
+    /** Horizontal aim offset in degrees (−50 to +50). Feed into AO_Pistol X axis. */
+    UPROPERTY(BlueprintReadOnly, Category = "Combat|GunAim")
+    float GunAimYaw = 0.f;
+
+    /** Vertical aim offset in degrees (−25 to +30). Feed into AO_Pistol Y axis. */
+    UPROPERTY(BlueprintReadOnly, Category = "Combat|GunAim")
+    float GunAimPitch = 0.f;
+
     // -------------------------------------------------------------------------
     //  Montage references — assign these in the ABP Class Defaults
     // -------------------------------------------------------------------------
@@ -106,6 +118,7 @@ public:
 
     virtual void NativeInitializeAnimation() override;
     virtual void NativeUninitializeAnimation() override;
+    virtual void NativeUpdateAnimation(float DeltaSeconds) override;
 
 private:
 

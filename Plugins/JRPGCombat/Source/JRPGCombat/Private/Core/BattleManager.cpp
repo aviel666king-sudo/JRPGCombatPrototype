@@ -725,6 +725,14 @@ UCombatHUDWidget* ABattleManager::CreateAndShowHUD(APlayerController* PC)
         CombatHUD->AddToViewport();
         CombatHUD->InitializeHUD(this);
     }
+
+    // Allow both UI and game input simultaneously so RMB reaches the HUD widget.
+    FInputModeGameAndUI InputMode;
+    InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+    InputMode.SetHideCursorDuringCapture(false);
+    PC->SetInputMode(InputMode);
+    PC->bShowMouseCursor = true;
+
     return CombatHUD;
 }
 
@@ -878,13 +886,13 @@ void ABattleManager::PositionGunAimCamera(ACombatantBase* Player)
     const FVector Forward = Player->GetActorForwardVector();
     const FVector Right   = Player->GetActorRightVector();
 
-    // Tight over-the-shoulder on the right side, close to the character.
+    // Over-the-shoulder: behind and to the right of the character, at shoulder height.
     const FVector CamPos = CharLoc
-        + Forward * 60.f
-        + Right   * 65.f
-        + FVector(0.f, 0.f, 100.f);
+        - Forward * 80.f
+        + Right   * 55.f
+        + FVector(0.f, 0.f, 75.f);
 
-    // Aim down the character's forward vector (toward enemies).
+    // Look toward enemies (character's forward direction).
     GunAimCameraActor->SetActorLocationAndRotation(CamPos, Forward.Rotation());
     GunAimBaseRotation = Forward.Rotation();
 }

@@ -1010,24 +1010,53 @@ void ABattleManager::FireGunAimShot()
         return;
     }
 
-    // Line trace from the aim camera forward.
-    FHitResult Hit;
-    const FVector TraceStart = GunAimCameraActor->GetActorLocation();
-    const FVector TraceEnd   = TraceStart + GunAimCameraActor->GetActorForwardVector() * 8000.f;
-
-    FCollisionQueryParams Params(TEXT("GunShot"), /*bTraceComplex=*/false);
-    Params.AddIgnoredActor(this);
-    Params.AddIgnoredActor(ActiveCombatant);
-
-    ACombatantBase* HitEnemy = nullptr;
-    if (GetWorld()->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility, Params))
+    // Deproject from screen center to get the true aim ray.
+    // The OTS camera is offset 55 units right of the player — tracing from the camera
+    // position directly causes a 55-unit lateral error that causes misses on enemies
+    // straight ahead. Deprojecting the viewport center gives the exact ray the player sees.
+    FVector TraceStart, RayDir;
     {
-        if (ACombatantBase* HitC = Cast<ACombatantBase>(Hit.GetActor()))
+        int32 VX = 0, VY = 0;
+        CachedPlayerController->GetViewportSize(VX, VY);
+        CachedPlayerController->DeprojectScreenPositionToWorld(
+            VX * 0.5f, VY * 0.5f, TraceStart, RayDir);
+        RayDir.Normalize();
+    }
+    const FVector TraceEnd = TraceStart + RayDir * 8000.f;
+    // Ray-vs-capsule proximity check.
+    // Test 3 heights (feet / center / head) so the hit registers regardless of
+    // where on the body the player aims — not just at the capsule center.
+    ACombatantBase* HitEnemy       = nullptr;
+    constexpr float CapsuleHalfH   = 90.f;
+    constexpr float HitRadius      = 55.f; // capsule radius 30 + 25 aim assist
+    float           BestDist       = HitRadius;
+
+    for (TObjectPtr<ACombatantBase>& C : AllCombatants)
+    {
+        if (!C || C->GetTeam() != ECombatTeam::Enemy || C->IsDead()) { continue; }
+
+        const FVector Center = C->GetActorLocation();
+        const FVector TestPoints[3] = {
+            Center - FVector(0.f, 0.f, CapsuleHalfH), // feet
+            Center,                                     // waist
+            Center + FVector(0.f, 0.f, CapsuleHalfH), // head
+        };
+
+        float MinDist = FLT_MAX;
+        for (const FVector& TestPt : TestPoints)
         {
-            if (HitC->GetTeam() == ECombatTeam::Enemy && !HitC->IsDead())
-            {
-                HitEnemy = HitC;
-            }
+            const FVector ToPoint  = TestPt - TraceStart;
+            const float   AlongRay = FVector::DotProduct(ToPoint, RayDir);
+            if (AlongRay < 0.f) { continue; } // behind camera
+            const FVector ClosestPt = TraceStart + RayDir * AlongRay;
+            MinDist = FMath::Min(MinDist, FVector::Dist(ClosestPt, TestPt));
+        }
+
+        UE_LOG(LogTemp, Warning, TEXT("[GunTrace] Enemy %s minDist=%.1f"), *C->GetName(), MinDist);
+        if (MinDist < BestDist)
+        {
+            BestDist = MinDist;
+            HitEnemy = C;
         }
     }
 

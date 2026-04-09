@@ -275,6 +275,7 @@ FReply UCombatHUDWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry,
     if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton && bGunAimInputActive)
     {
         if (BM) { BM->FireGunAimShot(); }
+        RefreshAll();
         return FReply::Handled();
     }
 

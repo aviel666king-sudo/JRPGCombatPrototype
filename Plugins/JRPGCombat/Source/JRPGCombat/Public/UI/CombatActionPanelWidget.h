@@ -337,8 +337,10 @@ private:
     /** Apply the correct WidgetSwitcher index for CurrentState. */
     void ApplySwitcherIndex();
 
+public:
     /** Enable/disable main-menu buttons based on what the acting character can do. */
     void RefreshMainMenuButtons();
+private:
 
     /** Find the ability index tagged as Melee on the acting character. -1 if none. */
     int32 FindMeleeAbilityIndex() const;

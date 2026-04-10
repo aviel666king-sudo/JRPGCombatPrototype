@@ -13,7 +13,7 @@ public:
     {
         DisplayName   = FText::FromString("Barrier");
         BaseDuration  = 99; // Expires when hit, not by time.
-        MaxStacks     = 99; // No practical cap — stack as many as needed.
+        MaxStacks     = 9;
         Priority      = 15; // High priority — runs before other damage hooks.
         StackBehavior = EEffectStackBehavior::StackAndRefresh;
     }

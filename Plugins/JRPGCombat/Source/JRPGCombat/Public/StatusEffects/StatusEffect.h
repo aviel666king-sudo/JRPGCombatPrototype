@@ -156,4 +156,28 @@ public:
      *           AgilityDownEffect returns -0.35f → speed × 0.65
      */
     virtual float GetSpeedModifier() const { return 0.f; }
+
+    /** If true, this effect prevents the owner from taking their turn action. */
+    virtual bool BlocksTurnAction() const { return false; }
+
+    /** If true, this effect causes the owner to attack allies instead of enemies. */
+    virtual bool ConfusesTarget() const { return false; }
+
+    /** If true, this effect prevents the owner from receiving healing. */
+    virtual bool BlocksHealing() const { return false; }
+
+    /** If true, this effect prevents the owner from gaining AP. */
+    virtual bool BlocksAPGain() const { return false; }
+
+    /** If true, this effect prevents the owner from using skill-category abilities. */
+    virtual bool BlocksAbilityUse() const { return false; }
+
+    /** If true, this effect grants the owner an extra immediate turn after their current one ends. */
+    virtual bool GrantsExtraTurn() const { return false; }
+
+    /** Multiplier applied to enemy targeting weight for this combatant. Default = 1. */
+    virtual float GetTargetWeight() const { return 1.f; }
+
+    /** Called by StatusEffectManagerComponent::ConsumeExtraTurn to reset the grant. */
+    virtual void ConsumeExtraTurnGrant() {}
 };

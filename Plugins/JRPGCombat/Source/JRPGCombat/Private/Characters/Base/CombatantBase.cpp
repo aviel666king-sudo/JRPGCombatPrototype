@@ -190,6 +190,9 @@ void ACombatantBase::BP_ApplyDamage(ACombatantBase* Source, float BaseDamage, ED
 
 void ACombatantBase::ApplyHealing(float Amount, ACombatantBase* Source)
 {
+    // Hunger effect blocks healing.
+    if (StatusEffectManager && !StatusEffectManager->CanReceiveHealing()) return;
+
     if (Source && Source->StatusEffectManager)
     {
         Source->StatusEffectManager->NotifyBeforeDealHealing(Amount);
@@ -252,6 +255,10 @@ void ACombatantBase::SpendResource(EResourceType Type, float Amount)
 
 void ACombatantBase::RestoreResource(EResourceType Type, float Amount)
 {
+    // Despair effect blocks AP gain.
+    if (Type == EResourceType::AP && StatusEffectManager && !StatusEffectManager->CanGainAP())
+        return;
+
     if (FResourcePool* Pool = Resources.Find(Type))
     {
         Pool->Current = FMath::Clamp(Pool->Current + Amount, 0.f, Pool->Max);

@@ -252,3 +252,59 @@ float UStatusEffectManagerComponent::GetSpeedMultiplier() const
     }
     return FMath::Max(0.1f, 1.f + TotalModifier);
 }
+
+bool UStatusEffectManagerComponent::ShouldSkipTurn() const
+{
+    for (const UStatusEffect* E : ActiveEffects)
+        if (E && E->BlocksTurnAction()) return true;
+    return false;
+}
+
+bool UStatusEffectManagerComponent::ShouldConfuseAttack() const
+{
+    for (const UStatusEffect* E : ActiveEffects)
+        if (E && E->ConfusesTarget()) return true;
+    return false;
+}
+
+bool UStatusEffectManagerComponent::CanReceiveHealing() const
+{
+    for (const UStatusEffect* E : ActiveEffects)
+        if (E && E->BlocksHealing()) return false;
+    return true;
+}
+
+bool UStatusEffectManagerComponent::CanGainAP() const
+{
+    for (const UStatusEffect* E : ActiveEffects)
+        if (E && E->BlocksAPGain()) return false;
+    return true;
+}
+
+bool UStatusEffectManagerComponent::CanUseAbilities() const
+{
+    for (const UStatusEffect* E : ActiveEffects)
+        if (E && E->BlocksAbilityUse()) return false;
+    return true;
+}
+
+bool UStatusEffectManagerComponent::ConsumeExtraTurn()
+{
+    for (UStatusEffect* E : ActiveEffects)
+    {
+        if (E && E->GrantsExtraTurn())
+        {
+            E->ConsumeExtraTurnGrant();
+            return true;
+        }
+    }
+    return false;
+}
+
+float UStatusEffectManagerComponent::GetEnemyTargetWeight() const
+{
+    float Weight = 1.f;
+    for (const UStatusEffect* E : ActiveEffects)
+        if (E) Weight *= E->GetTargetWeight();
+    return Weight;
+}

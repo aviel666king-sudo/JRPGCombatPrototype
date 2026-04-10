@@ -3,6 +3,7 @@
 #include "Components/CapsuleComponent.h"
 #include "Core/TurnOrderManager.h"
 #include "Components/AbilityManagerComponent.h"
+#include "Components/StatusEffectManagerComponent.h"
 #include "Components/ProtocolManagerComponent.h"
 #include "Abilities/CombatAbility.h"
 #include "Abilities/Protocols/Ability_HealingProtocol.h"
@@ -251,6 +252,14 @@ void ABattleManager::Phase_StartNextTurn()
 
     if (ActiveCombatant->IsDead()) { Phase_EndTurn(); return; }
 
+    // Check if this combatant is frozen/stunned/sleeping — skip their turn.
+    if (ActiveCombatant->StatusEffectManager && ActiveCombatant->StatusEffectManager->ShouldSkipTurn())
+    {
+        UE_LOG(LogTemp, Log, TEXT("[BattleManager] %s turn skipped by status effect."), *ActiveCombatant->GetName());
+        Phase_EndTurn();
+        return;
+    }
+
     if (IsPlayerTurn())
     {
         // Blend camera to frame the active player character.
@@ -288,6 +297,17 @@ void ABattleManager::Phase_ExecutePlayerAction(int32 AbilityIndex,
                                                 const TArray<ACombatantBase*>& Targets)
 {
     if (!ActiveCombatant || CurrentPhase != EBattlePhase::AwaitingInput) { return; }
+
+    // Overheat: block skill-category abilities.
+    if (const UCombatAbility* Ability = ActiveCombatant->AbilityManager->GetAbility(AbilityIndex))
+    {
+        if (Ability->AbilityCategory == EAbilityCategory::Skill &&
+            ActiveCombatant->StatusEffectManager && !ActiveCombatant->StatusEffectManager->CanUseAbilities())
+        {
+            UE_LOG(LogTemp, Log, TEXT("[BattleManager] %s cannot use abilities (Overheat)."), *ActiveCombatant->GetName());
+            return;
+        }
+    }
 
     SetPhase(EBattlePhase::ExecutingAction);
 
@@ -328,7 +348,10 @@ void ABattleManager::Phase_ExecuteEnemyAction()
     const UCombatAbility* Ability = ActiveCombatant->AbilityManager->GetAbility(0);
     const ETargetScope Scope = Ability ? Ability->TargetScope : ETargetScope::SingleEnemy;
 
-    TArray<ACombatantBase*> Candidates = GetValidTargets(Scope, ActiveCombatant);
+    // Confuse: enemy attacks own team instead.
+    bool bConfused = ActiveCombatant->StatusEffectManager && ActiveCombatant->StatusEffectManager->ShouldConfuseAttack();
+    ETargetScope EffectiveScope = bConfused ? ETargetScope::SingleAlly : Scope;
+    TArray<ACombatantBase*> Candidates = GetValidTargets(EffectiveScope, ActiveCombatant);
     if (Candidates.IsEmpty())
     {
         UE_LOG(LogTemp, Warning, TEXT("[BattleManager] Enemy %s: no valid targets, skipping."),
@@ -338,12 +361,27 @@ void ABattleManager::Phase_ExecuteEnemyAction()
     }
 
     TArray<ACombatantBase*> Targets;
-    if (Scope == ETargetScope::AllEnemies || Scope == ETargetScope::AllAllies)
+    if (EffectiveScope == ETargetScope::AllEnemies || EffectiveScope == ETargetScope::AllAllies)
         Targets = Candidates;
-    else if (Scope == ETargetScope::Self)
+    else if (EffectiveScope == ETargetScope::Self)
         Targets = { ActiveCombatant };
     else
-        Targets = { Candidates[FMath::RandRange(0, Candidates.Num() - 1)] };
+    {
+        // Weighted random selection — AfterMe buff increases targeting chance.
+        float TotalWeight = 0.f;
+        for (ACombatantBase* C : Candidates)
+            TotalWeight += (C && C->StatusEffectManager) ? C->StatusEffectManager->GetEnemyTargetWeight() : 1.f;
+
+        float Roll = FMath::FRand() * TotalWeight;
+        ACombatantBase* Chosen = Candidates.Last();
+        for (ACombatantBase* C : Candidates)
+        {
+            float W = (C && C->StatusEffectManager) ? C->StatusEffectManager->GetEnemyTargetWeight() : 1.f;
+            Roll -= W;
+            if (Roll <= 0.f) { Chosen = C; break; }
+        }
+        Targets = { Chosen };
+    }
 
     // Trigger animation for the enemy's ability.
     if (Ability)
@@ -381,8 +419,17 @@ void ABattleManager::Phase_EndTurn()
     // Clear enemy acting highlight.
     OnEnemyActingChanged.Broadcast(nullptr);
 
+    ACombatantBase* JustActed = ActiveCombatant;
     if (ActiveCombatant) { ActiveCombatant->OnTurnEnd(); }
     ActiveCombatant = nullptr;
+
+    // Berserk: grant an extra immediate turn if the effect is still active after turn end.
+    if (JustActed && !JustActed->IsDead() && JustActed->StatusEffectManager &&
+        JustActed->StatusEffectManager->ConsumeExtraTurn())
+    {
+        TurnOrderManager->InsertExtraTurn(JustActed);
+        UE_LOG(LogTemp, Log, TEXT("[BattleManager] %s gets an extra turn (Berserk)."), *JustActed->GetName());
+    }
 
     Phase_StartNextTurn();
 }

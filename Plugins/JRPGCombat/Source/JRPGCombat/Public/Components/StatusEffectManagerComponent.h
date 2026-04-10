@@ -95,6 +95,27 @@ public:
      */
     float GetSpeedMultiplier() const;
 
+    /** True if any active effect blocks the owner from acting this turn. */
+    bool ShouldSkipTurn() const;
+
+    /** True if any active effect confuses the owner (attacks allies). */
+    bool ShouldConfuseAttack() const;
+
+    /** True if any active effect blocks healing. */
+    bool CanReceiveHealing() const;
+
+    /** True if any active effect blocks AP gain. */
+    bool CanGainAP() const;
+
+    /** True if all active effects allow ability use (no Overheat). */
+    bool CanUseAbilities() const;
+
+    /** True if any active effect grants an extra turn (Berserk). Consumes the extra turn grant. */
+    bool ConsumeExtraTurn();
+
+    /** Returns the combined enemy targeting weight multiplier from all active effects. */
+    float GetEnemyTargetWeight() const;
+
 private:
 
     UPROPERTY()

@@ -38,7 +38,54 @@ enum class EDamageType : uint8
 {
     Physical   UMETA(DisplayName = "Physical"),
     Magical    UMETA(DisplayName = "Magical"),
+    Special    UMETA(DisplayName = "Special"),
     TrueDamage UMETA(DisplayName = "True"),
+};
+
+// ---------------------------------------------------------------------------
+//  Element — the specific elemental subtype of an attack or ability.
+//  Physical subtypes: Pierce, Slash, Smash.
+//  Magical: Wind, Fire, Ice, Electric, Nature, Light, Dark.
+//  Special: Sacrificial, Virus.
+//  None = untyped (bypasses element resistance checks).
+// ---------------------------------------------------------------------------
+UENUM(BlueprintType)
+enum class EElement : uint8
+{
+    None        UMETA(DisplayName = "None"),
+    // Physical
+    Pierce      UMETA(DisplayName = "Pierce"),
+    Slash       UMETA(DisplayName = "Slash"),
+    Smash       UMETA(DisplayName = "Smash"),
+    // Magical
+    Wind        UMETA(DisplayName = "Wind"),
+    Fire        UMETA(DisplayName = "Fire"),
+    Ice         UMETA(DisplayName = "Ice"),
+    Electric    UMETA(DisplayName = "Electric"),
+    Nature      UMETA(DisplayName = "Nature"),
+    Light       UMETA(DisplayName = "Light"),
+    Dark        UMETA(DisplayName = "Dark"),
+    // Special
+    Sacrificial UMETA(DisplayName = "Sacrificial"),
+    Virus       UMETA(DisplayName = "Virus"),
+};
+
+// ---------------------------------------------------------------------------
+//  Resistance type — how a combatant reacts to a given element.
+//  Normal  = 1.0x damage.
+//  Weak    = 1.5x damage.
+//  Resist  = 0.5x damage.
+//  Block   = 0.0x damage (fully negated).
+//  Absorb  = heals the target instead of damaging them (1.0x as healing).
+// ---------------------------------------------------------------------------
+UENUM(BlueprintType)
+enum class EResistanceType : uint8
+{
+    Normal  UMETA(DisplayName = "Normal"),
+    Weak    UMETA(DisplayName = "Weak"),
+    Resist  UMETA(DisplayName = "Resist"),
+    Block   UMETA(DisplayName = "Block"),
+    Absorb  UMETA(DisplayName = "Absorb"),
 };
 
 UENUM(BlueprintType)
@@ -217,6 +264,15 @@ struct JRPGCOMBAT_API FDamagePayload
 
     UPROPERTY(BlueprintReadOnly, Category = "Damage")
     EDamageType DamageType = EDamageType::Physical;
+
+    /** Elemental subtype of this hit. EElement::None bypasses resistance checks. */
+    UPROPERTY(BlueprintReadOnly, Category = "Damage")
+    EElement Element = EElement::None;
+
+    /** Filled by ApplyDamage — the target's reaction to this element (Weak/Resist/etc.).
+     *  Use this in UI to display feedback labels. */
+    UPROPERTY(BlueprintReadOnly, Category = "Damage")
+    EResistanceType HitResistance = EResistanceType::Normal;
 
     UPROPERTY(BlueprintReadOnly, Category = "Damage")
     float ResolvedDamage = 0.f;

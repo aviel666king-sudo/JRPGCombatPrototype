@@ -16,6 +16,7 @@ public:
     UAbility_SystemDisrupt()
     {
         DisplayName = FText::FromString("System Disrupt");
+        Element     = EElement::Dark;
         bEndsTurn   = true;
         Costs.Add({ EResourceType::AP, 2.f });
     }

@@ -16,6 +16,7 @@ public:
         bEndsTurn         = true;
         bIsSupportAbility = false;  // damage skill — blue strip active
         AbilityCategory   = EAbilityCategory::Skill;
+        Element           = EElement::Pierce;
         TargetScope       = ETargetScope::SingleEnemy;
         MinigameClass     = UDiamondTimingMinigame::StaticClass();
         Costs.Add({ EResourceType::AP, 2.f });

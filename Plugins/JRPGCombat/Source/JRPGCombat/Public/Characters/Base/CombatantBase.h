@@ -34,6 +34,22 @@ public:
     FCombatStats BaseStats;
 
     // -------------------------------------------------------------------------
+    //  Element resistances
+    //  Set per-combatant in Blueprint defaults. Unlisted elements = Normal.
+    //  Example: add Fire→Weak to make this unit take 1.5x fire damage.
+    // -------------------------------------------------------------------------
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combatant|Resistances")
+    TMap<EElement, EResistanceType> ElementResistances;
+
+    /** Returns this combatant's resistance type for the given element. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Combatant|Resistances")
+    EResistanceType GetResistanceType(EElement Element) const;
+
+    /** Returns the damage multiplier for the given element (Weak=1.5, Normal=1.0, Resist=0.5, Block=0.0).
+     *  Absorb is handled separately in ApplyDamage — this returns 0.f for it. */
+    float GetElementMultiplier(EElement Element) const;
+
+    // -------------------------------------------------------------------------
     //  Visual components
     // -------------------------------------------------------------------------
 

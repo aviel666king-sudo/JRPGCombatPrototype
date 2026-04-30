@@ -16,6 +16,7 @@ public:
     UAbility_ArmorBreach()
     {
         DisplayName = FText::FromString("Armor Breach");
+        Element     = EElement::Smash;
         bEndsTurn   = true;
         Costs.Add({ EResourceType::AP, 2.f });
     }

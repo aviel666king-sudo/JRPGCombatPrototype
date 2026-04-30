@@ -17,6 +17,7 @@ public:
     UAbility_SignalJam()
     {
         DisplayName = FText::FromString("Signal Jam");
+        Element     = EElement::Electric;
         bEndsTurn   = true;
         Costs.Add({ EResourceType::AP, 2.f });
     }

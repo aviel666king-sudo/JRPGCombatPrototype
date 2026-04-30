@@ -83,6 +83,7 @@ FDamagePayload UCombatAbility::MakeDamagePayload(ACombatantBase* Instigator,
     Payload.Source     = Instigator;
     Payload.BaseDamage = BaseDamage * ActiveMultiplier;  // 1.0 when no minigame ran
     Payload.DamageType = DamageType;
+    Payload.Element    = Element;  // Set on the ability, defaults to EElement::None
     return Payload;
 }
 

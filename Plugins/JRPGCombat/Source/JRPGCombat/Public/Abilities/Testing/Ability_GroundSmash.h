@@ -26,6 +26,7 @@ public:
     UAbility_GroundSmash()
     {
         DisplayName = FText::FromString("Ground Smash");
+        Element     = EElement::Smash;
         MaxCooldown = 0;
         bEndsTurn   = true;
         // No AP cost — leave Costs empty.

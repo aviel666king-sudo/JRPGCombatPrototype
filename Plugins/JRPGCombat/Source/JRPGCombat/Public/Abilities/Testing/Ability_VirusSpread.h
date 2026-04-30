@@ -17,6 +17,7 @@ public:
     UAbility_VirusSpread()
     {
         DisplayName = FText::FromString("Virus Spread");
+        Element     = EElement::Virus;
         bEndsTurn   = true;
         Costs.Add({ EResourceType::AP, 3.f });
     }

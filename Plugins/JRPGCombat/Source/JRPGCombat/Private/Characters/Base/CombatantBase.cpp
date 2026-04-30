@@ -117,6 +117,33 @@ void ACombatantBase::OnTurnEnd_Implementation()
 }
 
 // -----------------------------------------------------------------------------
+//  Element resistance helpers
+// -----------------------------------------------------------------------------
+
+EResistanceType ACombatantBase::GetResistanceType(EElement Element) const
+{
+    if (Element == EElement::None) { return EResistanceType::Normal; }
+    if (const EResistanceType* Found = ElementResistances.Find(Element))
+    {
+        return *Found;
+    }
+    return EResistanceType::Normal;
+}
+
+float ACombatantBase::GetElementMultiplier(EElement Element) const
+{
+    switch (GetResistanceType(Element))
+    {
+        case EResistanceType::Weak:   return 1.5f;
+        case EResistanceType::Normal: return 1.0f;
+        case EResistanceType::Resist: return 0.5f;
+        case EResistanceType::Block:  return 0.0f;
+        case EResistanceType::Absorb: return 0.0f; // Handled specially in ApplyDamage.
+    }
+    return 1.0f;
+}
+
+// -----------------------------------------------------------------------------
 //  Damage — C++ pipeline
 // -----------------------------------------------------------------------------
 
@@ -147,6 +174,38 @@ void ACombatantBase::ApplyDamage(FDamagePayload& Payload)
 
     // Re-read damage — an effect may have modified Payload.BaseDamage.
     Damage = Payload.BaseDamage;
+
+    // --- Element resistance ---
+    // Resolve the target's reaction and store it for UI feedback.
+    const EResistanceType Resistance = GetResistanceType(Payload.Element);
+    Payload.HitResistance = Resistance;
+
+    if (Resistance == EResistanceType::Absorb)
+    {
+        // Hit heals the target instead. Skip all damage logic.
+        UE_LOG(LogTemp, Log, TEXT("[Element] %s absorbed %s — healed for %.1f."),
+            *GetName(), *UEnum::GetValueAsString(Payload.Element), Damage);
+        ApplyHealing(Damage, Payload.Source.Get());
+        Payload.ResolvedDamage = 0.f;
+        if (Payload.Source && Payload.Source->StatusEffectManager)
+        {
+            Payload.Source->StatusEffectManager->NotifyDealDamage(Payload);
+        }
+        return;
+    }
+
+    Damage *= GetElementMultiplier(Payload.Element);
+
+    if (Resistance != EResistanceType::Normal)
+    {
+        UE_LOG(LogTemp, Log, TEXT("[Element] %s hit %s with %s — %s (x%.2f) → %.1f"),
+            Payload.Source ? *Payload.Source->GetName() : TEXT("?"),
+            *GetName(),
+            *UEnum::GetValueAsString(Payload.Element),
+            *UEnum::GetValueAsString(Resistance),
+            GetElementMultiplier(Payload.Element),
+            Damage);
+    }
 
     // Defense subtraction (non-true damage only).
     if (Payload.DamageType != EDamageType::TrueDamage)

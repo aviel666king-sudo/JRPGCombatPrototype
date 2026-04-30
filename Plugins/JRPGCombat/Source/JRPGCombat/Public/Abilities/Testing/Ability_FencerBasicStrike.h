@@ -14,6 +14,7 @@ public:
         MaxCooldown     = 0;
         bEndsTurn       = true;
         AbilityCategory = EAbilityCategory::Melee;  // appears on the Melee button
+        Element         = EElement::Slash;
         TargetScope     = ETargetScope::SingleEnemy;
         // No AP cost.
     }

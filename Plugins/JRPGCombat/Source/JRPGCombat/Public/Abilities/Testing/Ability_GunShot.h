@@ -14,6 +14,7 @@ public:
         MaxCooldown     = 0;
         bEndsTurn       = false;            // Player retains their turn after firing.
         AbilityCategory = EAbilityCategory::Gun;  // appears on the Gun button
+        Element         = EElement::Pierce;
         TargetScope     = ETargetScope::SingleEnemy;
         Costs.Add({ EResourceType::AP, 1.f });
     }

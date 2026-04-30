@@ -35,6 +35,11 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ability")
     bool bEndsTurn = true;
 
+    /** Elemental type of this ability's damage. Set in each ability's constructor.
+     *  EElement::None = untyped, bypasses resistance checks. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ability")
+    EElement Element = EElement::None;
+
     // -------------------------------------------------------------------------
     //  Category — drives which bottom-panel menu slot this ability appears in.
     //  Set this in every C++ ability constructor.

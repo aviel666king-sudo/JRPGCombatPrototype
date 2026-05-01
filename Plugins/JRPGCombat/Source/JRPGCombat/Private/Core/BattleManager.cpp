@@ -1,4 +1,5 @@
 #include "Core/BattleManager.h"
+#include "Core/BattleArena.h"
 #include "Characters/Base/CombatantBase.h"
 #include "Components/CapsuleComponent.h"
 #include "Core/TurnOrderManager.h"
@@ -40,6 +41,33 @@ void ABattleManager::StartBattle(const TArray<ACombatantBase*>& PlayerParty,
     for (ACombatantBase* C : PlayerParty) { if (C) { AllCombatants.Add(C); } }
     for (ACombatantBase* C : EnemyParty)  { if (C) { AllCombatants.Add(C); } }
     Phase_Initialize();
+}
+
+void ABattleManager::StartBattleAtArena(ABattleArena* Arena,
+                                         const TArray<ACombatantBase*>& PlayerParty,
+                                         const TArray<ACombatantBase*>& EnemyParty)
+{
+    if (!Arena)
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[BattleManager] StartBattleAtArena called with null arena. Falling back to StartBattle."));
+        StartBattle(PlayerParty, EnemyParty);
+        return;
+    }
+
+    // Pull spawn points and cameras from the arena. This makes the BM
+    // arena-agnostic — every level can have multiple arenas, and the GameMode
+    // picks which one based on which encounter the player walked into.
+    PlayerSpawnPoints           = Arena->PlayerSpawnPoints;
+    EnemySpawnPoints            = Arena->EnemySpawnPoints;
+    BaseCameraActor             = Arena->BaseCameraActor;
+    CharacterFocusCameraActor   = Arena->CharacterFocusCameraActor;
+    EnemyCursorCameraActor      = Arena->EnemyCursorCameraActor;
+    GunAimCameraActor           = Arena->GunAimCameraActor;
+
+    UE_LOG(LogTemp, Log, TEXT("[BattleManager] Starting battle at arena %s"), *Arena->GetName());
+
+    StartBattle(PlayerParty, EnemyParty);
 }
 
 void ABattleManager::RequestPlayerAbility(int32 AbilityIndex, const TArray<ACombatantBase*>& Targets)

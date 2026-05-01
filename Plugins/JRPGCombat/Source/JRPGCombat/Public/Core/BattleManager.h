@@ -11,6 +11,7 @@ class UCombatHUDWidget;
 class UProtocolManagerComponent;
 class ACameraActor;
 class APlayerController;
+class ABattleArena;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPhaseChanged,        EBattlePhase,    NewPhase);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCombatantTurn,       ACombatantBase*, ActiveCombatant);
@@ -157,6 +158,19 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Battle")
     void StartBattle(const TArray<ACombatantBase*>& PlayerParty,
                      const TArray<ACombatantBase*>& EnemyParty);
+
+    /**
+     * Start a battle using an ABattleArena to source spawn points and cameras.
+     * The arena's PlayerSpawnPoints, EnemySpawnPoints, and four camera actors
+     * are copied into this BattleManager just before Phase_Initialize runs.
+     *
+     * Use this entry point from AJrpgGameMode when starting an encounter — the
+     * arena tells the BM where the fight should happen in this level.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Battle")
+    void StartBattleAtArena(ABattleArena* Arena,
+                            const TArray<ACombatantBase*>& PlayerParty,
+                            const TArray<ACombatantBase*>& EnemyParty);
 
     UFUNCTION(BlueprintCallable, Category = "Battle")
     void RequestPlayerAbility(int32 AbilityIndex, const TArray<ACombatantBase*>& Targets);

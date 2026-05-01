@@ -4,6 +4,8 @@
 #include "Core/BattleManager.h"
 #include "Core/BattleArena.h"
 #include "Characters/Base/CombatantBase.h"
+#include "UI/CombatHUDWidget.h"
+#include "Blueprint/UserWidget.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PawnMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
@@ -128,6 +130,14 @@ void AJrpgGameMode::BeginEncounter(AEnemyEncounter* Encounter)
     ActiveEncounter = Encounter;
     WorldMode       = EWorldMode::InCombat;
 
+    // Create the combat HUD widget. The old auto-start flow used to do this in
+    // the Level Blueprint; now we own it here so the encounter system stays
+    // self-contained — every fight gets a HUD without level-bp wiring.
+    if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
+    {
+        BattleManager->CreateAndShowHUD(PC);
+    }
+
     BattleManager->StartBattleAtArena(Arena, PlayerArray, EnemyArray);
 
     UE_LOG(LogTemp, Log, TEXT("[JrpgGameMode] Encounter started. Party=%d  Enemies=%d  Arena=%s"),
@@ -141,6 +151,21 @@ void AJrpgGameMode::HandleBattleEnded(bool bVictory)
 
     if (bVictory)
     {
+        // Tear down the combat HUD — it added itself to viewport and switched
+        // input mode to GameAndUI; we have to undo both for exploration to
+        // feel right (mouse hidden, input goes to the pawn).
+        if (BattleManager && BattleManager->CombatHUD)
+        {
+            BattleManager->CombatHUD->RemoveFromParent();
+            BattleManager->CombatHUD = nullptr;
+        }
+        if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
+        {
+            FInputModeGameOnly InputMode;
+            PC->SetInputMode(InputMode);
+            PC->bShowMouseCursor = false;
+        }
+
         // Destroy spawned enemies — they're gone from the world for good.
         for (TObjectPtr<ACombatantBase> Enemy : SpawnedEnemies)
         {

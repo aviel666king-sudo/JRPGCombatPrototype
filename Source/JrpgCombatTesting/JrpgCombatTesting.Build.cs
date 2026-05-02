@@ -8,7 +8,7 @@ public class JrpgCombatTesting : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "JRPGCombat" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "UMG", "JRPGCombat" });
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });
 

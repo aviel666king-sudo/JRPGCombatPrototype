@@ -69,15 +69,21 @@ public:
     /**
      * Called by AEnemyEncounter when the player overlaps it.
      *
+     * bPlayerHasInitiative = true means the player got the drop on the enemy
+     * (they walked into a stunned encounter, or landed a cone shot). The
+     * fastest player party member then acts first. Otherwise the fastest
+     * enemy gets the first turn (default ambush behaviour).
+     *
      * Steps:
      *   1. Snapshot pawn position so we can return after combat
      *   2. Hide / disable the exploration pawn
      *   3. Spawn enemies from the encounter's class list at arena enemy slots
      *   4. Show the player party at arena player slots
-     *   5. Call BattleManager->StartBattleAtArena()
+     *   5. Pick the priority combatant by speed
+     *   6. Call BattleManager->StartBattleAtArena()
      */
     UFUNCTION(BlueprintCallable, Category = "JRPG|Encounter")
-    void BeginEncounter(AEnemyEncounter* Encounter);
+    void BeginEncounter(AEnemyEncounter* Encounter, bool bPlayerHasInitiative = false);
 
 protected:
 

@@ -45,7 +45,8 @@ void ABattleManager::StartBattle(const TArray<ACombatantBase*>& PlayerParty,
 
 void ABattleManager::StartBattleAtArena(ABattleArena* Arena,
                                          const TArray<ACombatantBase*>& PlayerParty,
-                                         const TArray<ACombatantBase*>& EnemyParty)
+                                         const TArray<ACombatantBase*>& EnemyParty,
+                                         ACombatantBase* PriorityCombatant)
 {
     if (!Arena)
     {
@@ -65,7 +66,14 @@ void ABattleManager::StartBattleAtArena(ABattleArena* Arena,
     EnemyCursorCameraActor      = Arena->EnemyCursorCameraActor;
     GunAimCameraActor           = Arena->GunAimCameraActor;
 
-    UE_LOG(LogTemp, Log, TEXT("[BattleManager] Starting battle at arena %s"), *Arena->GetName());
+    // Stash the priority combatant so Phase_Initialize can apply it after the
+    // queue is built. We can't set it directly here because StartBattle ->
+    // Phase_Initialize is what builds the queue.
+    PendingPriorityCombatant = PriorityCombatant;
+
+    UE_LOG(LogTemp, Log, TEXT("[BattleManager] Starting battle at arena %s  Priority=%s"),
+        *Arena->GetName(),
+        PriorityCombatant ? *PriorityCombatant->GetName() : TEXT("none"));
 
     StartBattle(PlayerParty, EnemyParty);
 }
@@ -144,6 +152,19 @@ void ABattleManager::Phase_Initialize()
     }
 
     TurnOrderManager->BuildTurnOrder(Raw);
+
+    // ── Apply first-strike priority if the encounter system requested it ─────
+    // The encounter system calls StartBattleAtArena with a PriorityCombatant
+    // when the player got the drop on the enemy (cone shot / stun-touch) or
+    // vice versa (default contact ambush). InsertExtraTurn pushes them to the
+    // front of the queue — they act before the regular speed-sorted order.
+    if (PendingPriorityCombatant && !PendingPriorityCombatant->IsDead())
+    {
+        TurnOrderManager->InsertExtraTurn(PendingPriorityCombatant);
+        UE_LOG(LogTemp, Log, TEXT("[BattleManager] First-strike granted to %s"),
+            *PendingPriorityCombatant->GetName());
+    }
+    PendingPriorityCombatant = nullptr;  // consume the request
 
     // ── Cache PlayerController early so camera calls work on Turn 1 ──────────
     if (!CachedPlayerController)

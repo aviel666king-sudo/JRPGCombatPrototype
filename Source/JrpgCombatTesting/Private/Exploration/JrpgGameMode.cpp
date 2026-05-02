@@ -30,7 +30,7 @@ void AJrpgGameMode::BeginPlay()
     UE_LOG(LogTemp, Log, TEXT("[JrpgGameMode] BeginPlay. WorldMode = Exploring."));
 }
 
-void AJrpgGameMode::BeginEncounter(AEnemyEncounter* Encounter)
+void AJrpgGameMode::BeginEncounter(AEnemyEncounter* Encounter, bool bPlayerHasInitiative)
 {
     if (WorldMode == EWorldMode::InCombat)
     {
@@ -138,7 +138,30 @@ void AJrpgGameMode::BeginEncounter(AEnemyEncounter* Encounter)
         BattleManager->CreateAndShowHUD(PC);
     }
 
-    BattleManager->StartBattleAtArena(Arena, PlayerArray, EnemyArray);
+    // ── Pick the first-strike combatant by speed ─────────────────────────────
+    // bPlayerHasInitiative encodes who got the drop on whom:
+    //  - true  → the fastest player party member acts first (cone shot,
+    //            walked into a stunned enemy, or future stealth assassin)
+    //  - false → the fastest enemy acts first (default contact ambush, per
+    //            the GDD's "engages directly or is detected" rule)
+    auto FastestOf = [](const TArray<ACombatantBase*>& Candidates) -> ACombatantBase*
+    {
+        ACombatantBase* Best = nullptr;
+        float BestSpeed = -1.f;
+        for (ACombatantBase* C : Candidates)
+        {
+            if (!C || C->IsDead()) { continue; }
+            const float S = C->GetEffectiveSpeed();
+            if (S > BestSpeed) { BestSpeed = S; Best = C; }
+        }
+        return Best;
+    };
+
+    ACombatantBase* PriorityCombatant = bPlayerHasInitiative
+        ? FastestOf(PlayerArray)
+        : FastestOf(EnemyArray);
+
+    BattleManager->StartBattleAtArena(Arena, PlayerArray, EnemyArray, PriorityCombatant);
 
     UE_LOG(LogTemp, Log, TEXT("[JrpgGameMode] Encounter started. Party=%d  Enemies=%d  Arena=%s"),
         PlayerArray.Num(), EnemyArray.Num(), *Arena->GetName());

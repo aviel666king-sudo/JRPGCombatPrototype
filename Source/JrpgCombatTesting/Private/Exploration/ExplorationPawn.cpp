@@ -1,16 +1,23 @@
 #include "Exploration/ExplorationPawn.h"
+#include "Exploration/EnemyEncounter.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Camera/CameraComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
+#include "GameFramework/PlayerController.h"
 #include "Components/CapsuleComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "InputActionValue.h"
+#include "Blueprint/UserWidget.h"
+#include "Engine/World.h"
+#include "Engine/OverlapResult.h"
+#include "DrawDebugHelpers.h"
 
 AExplorationPawn::AExplorationPawn()
 {
-    PrimaryActorTick.bCanEverTick = false;
+    // Tick to count down the gun cooldown timer. Cheap when not on cooldown.
+    PrimaryActorTick.bCanEverTick = true;
 
     // -------------------------------------------------------------------------
     //  Capsule + movement defaults
@@ -63,7 +70,41 @@ void AExplorationPawn::BeginPlay()
                 Subsystem->AddMappingContext(ExplorationMappingContext, 0);
             }
         }
+
+        // Spawn the exploration HUD (crosshair + reload bar). The widget reads
+        // IsAiming() and GetGunCooldownPercent() each frame to draw itself.
+        if (ExplorationHUDClass)
+        {
+            ExplorationHUD = CreateWidget<UUserWidget>(PC, ExplorationHUDClass);
+            if (ExplorationHUD) { ExplorationHUD->AddToViewport(); }
+        }
     }
+}
+
+void AExplorationPawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+    if (ExplorationHUD)
+    {
+        ExplorationHUD->RemoveFromParent();
+        ExplorationHUD = nullptr;
+    }
+    Super::EndPlay(EndPlayReason);
+}
+
+void AExplorationPawn::Tick(float DeltaTime)
+{
+    Super::Tick(DeltaTime);
+
+    if (CooldownRemaining > 0.f)
+    {
+        CooldownRemaining = FMath::Max(0.f, CooldownRemaining - DeltaTime);
+    }
+}
+
+float AExplorationPawn::GetGunCooldownPercent() const
+{
+    if (GunCooldown <= 0.f) { return 1.f; }
+    return FMath::Clamp(1.f - (CooldownRemaining / GunCooldown), 0.f, 1.f);
 }
 
 void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -83,7 +124,175 @@ void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
             EIC->BindAction(JumpAction, ETriggerEvent::Started,   this, &ACharacter::Jump);
             EIC->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
         }
+
+        // Aim is a hold action — Started enters aim mode, Completed leaves it.
+        if (AimAction)
+        {
+            EIC->BindAction(AimAction, ETriggerEvent::Started,   this, &AExplorationPawn::HandleAimStart);
+            EIC->BindAction(AimAction, ETriggerEvent::Completed, this, &AExplorationPawn::HandleAimEnd);
+        }
+
+        // Fire and ConeShot are single-press actions.
+        if (FireAction)
+        {
+            EIC->BindAction(FireAction, ETriggerEvent::Started, this, &AExplorationPawn::HandleFire);
+        }
+        if (ConeShotAction)
+        {
+            EIC->BindAction(ConeShotAction, ETriggerEvent::Started, this, &AExplorationPawn::HandleConeShot);
+        }
     }
+}
+
+// -----------------------------------------------------------------------------
+//  Gun handlers
+// -----------------------------------------------------------------------------
+
+void AExplorationPawn::HandleAimStart()
+{
+    bIsAiming = true;
+    UE_LOG(LogTemp, Verbose, TEXT("[ExplorationPawn] Aim ON"));
+}
+
+void AExplorationPawn::HandleAimEnd()
+{
+    bIsAiming = false;
+    UE_LOG(LogTemp, Verbose, TEXT("[ExplorationPawn] Aim OFF"));
+}
+
+void AExplorationPawn::HandleFire()
+{
+    // Regular fire requires aim mode — this prevents accidental clicks while
+    // running around. Cone shot (F) doesn't need aim because it's a quick
+    // close-range interrupt that should be reachable instantly.
+    if (!bIsAiming)         { return; }
+    if (!IsGunReady())      { return; }
+
+    CooldownRemaining = GunCooldown;
+
+    AEnemyEncounter* Hit = TraceForEncounter();
+    if (Hit)
+    {
+        Hit->Stun(StunDuration);
+        UE_LOG(LogTemp, Log, TEXT("[ExplorationPawn] Gun shot hit %s — stunned %.1fs"),
+            *Hit->GetName(), StunDuration);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Log, TEXT("[ExplorationPawn] Gun shot fired — missed"));
+    }
+}
+
+void AExplorationPawn::HandleConeShot()
+{
+    if (!IsGunReady()) { return; }
+
+    CooldownRemaining = GunCooldown;
+
+    TArray<AEnemyEncounter*> Targets;
+    GatherEncountersInCone(Targets);
+
+    if (Targets.Num() == 0)
+    {
+        UE_LOG(LogTemp, Log, TEXT("[ExplorationPawn] Cone shot fired — no encounter in range"));
+        return;
+    }
+
+    // Pick the closest encounter inside the cone and start combat with player
+    // initiative. The cone is short-range and front-facing so there should
+    // usually only be one candidate, but if multiple, closest is fairest.
+    AEnemyEncounter* Closest = nullptr;
+    float ClosestDistSq = TNumericLimits<float>::Max();
+    const FVector MyLoc = GetActorLocation();
+    for (AEnemyEncounter* E : Targets)
+    {
+        if (!E) { continue; }
+        const float DistSq = FVector::DistSquared(MyLoc, E->GetActorLocation());
+        if (DistSq < ClosestDistSq) { ClosestDistSq = DistSq; Closest = E; }
+    }
+
+    if (Closest)
+    {
+        UE_LOG(LogTemp, Log, TEXT("[ExplorationPawn] Cone shot landed on %s — player initiative"),
+            *Closest->GetName());
+        Closest->TriggerCombat(/*bPlayerHasInitiative=*/true);
+    }
+}
+
+// -----------------------------------------------------------------------------
+//  Trace helpers
+// -----------------------------------------------------------------------------
+
+AEnemyEncounter* AExplorationPawn::TraceForEncounter() const
+{
+    // Trace origin: just above the character's chest so the debug line looks
+    // like it leaves the character, not the camera 400 units behind their head.
+    // Direction: control rotation forward — that's where the player is "looking"
+    // via mouse, which feels closer to crosshair-aim than character forward.
+    const FVector Start = GetActorLocation() + FVector(0.f, 0.f, 50.f);
+    const FVector End   = Start + GetControlRotation().Vector() * GunRange;
+
+    FCollisionQueryParams Params(SCENE_QUERY_STAT(ExplorationGunTrace), false, this);
+
+    FHitResult Hit;
+    const bool bHit = GetWorld()->LineTraceSingleByChannel(
+        Hit, Start, End, ECC_Visibility, Params);
+
+#if !UE_BUILD_SHIPPING
+    // Green = hit an encounter, Red = missed. Lasts 1.5s for visibility.
+    DrawDebugLine(GetWorld(), Start, End, bHit ? FColor::Green : FColor::Red, false, 1.5f, 0, 1.f);
+#endif
+
+    if (!bHit) { return nullptr; }
+    return Cast<AEnemyEncounter>(Hit.GetActor());
+}
+
+void AExplorationPawn::GatherEncountersInCone(TArray<AEnemyEncounter*>& Out) const
+{
+    Out.Reset();
+
+    const FVector Origin  = GetActorLocation();
+    // Use the controller forward (camera/look direction) for cone direction so
+    // it aims where the player is facing the camera.
+    const FVector Forward = GetControlRotation().Vector();
+    const float CosHalfAngle = FMath::Cos(FMath::DegreesToRadians(ConeHalfAngleDeg));
+
+    // Cheap broad-phase: sphere overlap at the cone's tip distance, then
+    // filter by angle.
+    TArray<FOverlapResult> Overlaps;
+    FCollisionShape Sphere = FCollisionShape::MakeSphere(ConeRange);
+    FCollisionQueryParams Params(SCENE_QUERY_STAT(ExplorationConeShot), false, this);
+
+    GetWorld()->OverlapMultiByChannel(
+        Overlaps,
+        Origin + Forward * (ConeRange * 0.5f),  // sweep centre slightly forward
+        FQuat::Identity,
+        ECC_WorldDynamic,
+        Sphere,
+        Params);
+
+    for (const FOverlapResult& Result : Overlaps)
+    {
+        AEnemyEncounter* Encounter = Cast<AEnemyEncounter>(Result.GetActor());
+        if (!Encounter) { continue; }
+
+        const FVector ToTarget = (Encounter->GetActorLocation() - Origin);
+        const float Dist = ToTarget.Size();
+        if (Dist > ConeRange) { continue; }
+
+        const FVector Dir = ToTarget.GetSafeNormal();
+        if (FVector::DotProduct(Forward, Dir) < CosHalfAngle) { continue; }
+
+        Out.AddUnique(Encounter);
+    }
+
+#if !UE_BUILD_SHIPPING
+    // Visualize the cone for debugging — short-lived sphere at the tip.
+    DrawDebugCone(GetWorld(), Origin, Forward, ConeRange,
+        FMath::DegreesToRadians(ConeHalfAngleDeg),
+        FMath::DegreesToRadians(ConeHalfAngleDeg),
+        12, FColor::Yellow, false, 1.5f, 0, 1.f);
+#endif
 }
 
 void AExplorationPawn::HandleMove(const FInputActionValue& Value)

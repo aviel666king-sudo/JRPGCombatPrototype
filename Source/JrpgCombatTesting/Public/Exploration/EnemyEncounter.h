@@ -63,7 +63,36 @@ public:
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Encounter")
     ABattleArena* GetAssignedArena() const { return AssignedArena; }
 
+    // -------------------------------------------------------------------------
+    //  Pre-combat stun
+    //
+    //  The player can shoot an encounter with the gun (LMB while aiming) to
+    //  stun it. While stunned the encounter shouldn't chase the player (no
+    //  patrol AI yet, but the flag is exposed for future use), and if the
+    //  player walks into a stunned encounter combat starts with the player's
+    //  fastest party member acting first.
+    // -------------------------------------------------------------------------
+
+    /** Stun this encounter for Duration seconds. Resets if already stunned. */
+    UFUNCTION(BlueprintCallable, Category = "Encounter|Stun")
+    void Stun(float Duration);
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Encounter|Stun")
+    bool IsStunned() const { return bIsStunned; }
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Encounter|Stun")
+    float GetStunRemaining() const { return StunRemaining; }
+
+    /**
+     * Manually trigger combat with explicit initiative (used by the cone shot,
+     * which doesn't rely on overlap). Pass true to grant the player first turn.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Encounter")
+    void TriggerCombat(bool bPlayerHasInitiative);
+
 protected:
+
+    virtual void Tick(float DeltaTime) override;
 
     UFUNCTION()
     void HandleTriggerOverlap(UPrimitiveComponent* OverlappedComponent,
@@ -72,4 +101,11 @@ protected:
                               int32 OtherBodyIndex,
                               bool bFromSweep,
                               const FHitResult& SweepResult);
+
+    /** Stun runtime state. Counts down on Tick; clears bIsStunned at zero. */
+    UPROPERTY(BlueprintReadOnly, Category = "Encounter|Stun")
+    bool bIsStunned = false;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Encounter|Stun")
+    float StunRemaining = 0.f;
 };

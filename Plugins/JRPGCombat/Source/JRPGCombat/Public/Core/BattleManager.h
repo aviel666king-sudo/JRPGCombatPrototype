@@ -164,13 +164,19 @@ public:
      * The arena's PlayerSpawnPoints, EnemySpawnPoints, and four camera actors
      * are copied into this BattleManager just before Phase_Initialize runs.
      *
+     * PriorityCombatant (optional) gets the very first turn regardless of speed.
+     * Used by the encounter system to grant first-strike to the player when
+     * they cone-shot or contact-stun an enemy, or to the fastest enemy when
+     * the player is caught by surprise (the default JRPG ambush behaviour).
+     *
      * Use this entry point from AJrpgGameMode when starting an encounter — the
      * arena tells the BM where the fight should happen in this level.
      */
     UFUNCTION(BlueprintCallable, Category = "Battle")
     void StartBattleAtArena(ABattleArena* Arena,
                             const TArray<ACombatantBase*>& PlayerParty,
-                            const TArray<ACombatantBase*>& EnemyParty);
+                            const TArray<ACombatantBase*>& EnemyParty,
+                            ACombatantBase* PriorityCombatant = nullptr);
 
     UFUNCTION(BlueprintCallable, Category = "Battle")
     void RequestPlayerAbility(int32 AbilityIndex, const TArray<ACombatantBase*>& Targets);
@@ -401,6 +407,16 @@ private:
 
     UPROPERTY()
     int32 TurnNumber = 0;
+
+    /**
+     * Carried from StartBattleAtArena into Phase_Initialize.
+     * If non-null when the turn order is built, this combatant gets a free
+     * extra-turn slot inserted at the front of the queue, so they act before
+     * the regular speed-sorted order.
+     * Cleared to nullptr inside Phase_Initialize after being applied.
+     */
+    UPROPERTY()
+    TObjectPtr<ACombatantBase> PendingPriorityCombatant;
 
     // ─── Active-player cursor ────────────────────────────────────────────────
 

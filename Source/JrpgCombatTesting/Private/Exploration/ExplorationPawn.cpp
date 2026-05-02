@@ -74,6 +74,15 @@ void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
     {
         if (MoveAction) { EIC->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AExplorationPawn::HandleMove); }
         if (LookAction) { EIC->BindAction(LookAction, ETriggerEvent::Triggered, this, &AExplorationPawn::HandleLook); }
+
+        // Jump uses ACharacter's built-in helpers — Started fires once when the
+        // key is pressed, Completed fires when released. StopJumping cancels
+        // any held jump so a held key doesn't bunny-hop.
+        if (JumpAction)
+        {
+            EIC->BindAction(JumpAction, ETriggerEvent::Started,   this, &ACharacter::Jump);
+            EIC->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
+        }
     }
 }
 

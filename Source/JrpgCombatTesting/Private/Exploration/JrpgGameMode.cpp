@@ -9,6 +9,7 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PawnMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "EngineUtils.h"  // TActorIterator
 
 AJrpgGameMode::AJrpgGameMode()
 {
@@ -27,7 +28,26 @@ void AJrpgGameMode::BeginPlay()
         CachedExplorationPawn = Cast<AExplorationPawn>(PC->GetPawn());
     }
 
-    UE_LOG(LogTemp, Log, TEXT("[JrpgGameMode] BeginPlay. WorldMode = Exploring."));
+    // Hide every combatant placed in the level at startup. Player party
+    // members are revealed when an encounter triggers; orphan placed enemies
+    // (leftover from the pre-encounter test setup) stay hidden forever.
+    //
+    // Critical fix: their collision was blocking the exploration gun trace,
+    // making it impossible to actually shoot the encounter cube — the trace
+    // would hit a placed combatant first and call Stun on the wrong actor
+    // (or null-cast and do nothing).
+    int32 HiddenCount = 0;
+    for (TActorIterator<ACombatantBase> It(GetWorld()); It; ++It)
+    {
+        ACombatantBase* C = *It;
+        if (!C) { continue; }
+        C->SetActorHiddenInGame(true);
+        C->SetActorEnableCollision(false);
+        ++HiddenCount;
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("[JrpgGameMode] BeginPlay. WorldMode = Exploring. Hid %d level combatants."),
+        HiddenCount);
 }
 
 void AJrpgGameMode::BeginEncounter(AEnemyEncounter* Encounter, bool bPlayerHasInitiative)

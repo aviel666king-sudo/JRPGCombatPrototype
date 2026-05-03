@@ -102,6 +102,41 @@ public:
               meta = (ClampMin = "1.0", ClampMax = "89.0"))
     float ConeHalfAngleDeg = 22.5f;
 
+    /** How long the player is locked in place while casting the cone shot (s). */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Gun",
+              meta = (ClampMin = "0.0"))
+    float ConeCastLockDuration = 0.6f;
+
+    // -------------------------------------------------------------------------
+    //  Aim mode tunables
+    //  Snapped on aim-start / aim-end. SpringArm camera lag smooths the visual.
+    // -------------------------------------------------------------------------
+
+    /** Normal exploration walk speed (cm/s). */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Aim",
+              meta = (ClampMin = "0.0"))
+    float NormalWalkSpeed = 500.f;
+
+    /** Walk speed while aiming — slower so aiming feels deliberate. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Aim",
+              meta = (ClampMin = "0.0"))
+    float AimWalkSpeed = 200.f;
+
+    /** Spring arm length when not aiming. Standard third-person distance. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Aim",
+              meta = (ClampMin = "0.0"))
+    float NormalArmLength = 400.f;
+
+    /** Spring arm length when aiming — pulls camera in for over-the-shoulder feel. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Aim",
+              meta = (ClampMin = "0.0"))
+    float AimArmLength = 200.f;
+
+    /** Camera offset applied while aiming to put the crosshair off the character's
+     *  back. Y = right shoulder, Z = head height. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Aim")
+    FVector AimSocketOffset = FVector(0.f, 50.f, 30.f);
+
     // -------------------------------------------------------------------------
     //  Exploration HUD
     //  Assign a UUserWidget Blueprint (e.g. WBP_ExplorationHUD) here. The pawn
@@ -150,7 +185,13 @@ protected:
     /** Helper: gather all encounters within the cone in front of the pawn. */
     void GatherEncountersInCone(TArray<class AEnemyEncounter*>& Out) const;
 
+    /** Cleared by a timer started in HandleConeShot. */
+    void EndConeCastLock();
+
     // Runtime state
     bool  bIsAiming         = false;
+    bool  bIsCastingCone    = false;
     float CooldownRemaining = 0.f;
+
+    FTimerHandle ConeCastLockTimer;
 };

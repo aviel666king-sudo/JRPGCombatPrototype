@@ -11,8 +11,10 @@
 #include "InputActionValue.h"
 #include "Blueprint/UserWidget.h"
 #include "Engine/World.h"
+#include "TimerManager.h"
 #include "Engine/OverlapResult.h"
 #include "DrawDebugHelpers.h"
+#include "EngineUtils.h"  // TActorIterator
 
 AExplorationPawn::AExplorationPawn()
 {
@@ -151,12 +153,46 @@ void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 void AExplorationPawn::HandleAimStart()
 {
     bIsAiming = true;
+
+    // Movement penalty — slower walk feels more deliberate while aiming.
+    if (UCharacterMovementComponent* Move = GetCharacterMovement())
+    {
+        Move->MaxWalkSpeed = AimWalkSpeed;
+        // Strafe mode: character faces wherever the camera looks (instead of
+        // turning toward movement direction). Lets the player aim sideways
+        // while still walking forward, and matches typical TPS aim feel.
+        Move->bOrientRotationToMovement = false;
+    }
+    bUseControllerRotationYaw = true;
+
+    // Camera shift — pull the spring arm in close and push it to the right
+    // shoulder so the crosshair stops sitting on the character's back.
+    if (SpringArm)
+    {
+        SpringArm->TargetArmLength = AimArmLength;
+        SpringArm->SocketOffset    = AimSocketOffset;
+    }
+
     UE_LOG(LogTemp, Verbose, TEXT("[ExplorationPawn] Aim ON"));
 }
 
 void AExplorationPawn::HandleAimEnd()
 {
     bIsAiming = false;
+
+    if (UCharacterMovementComponent* Move = GetCharacterMovement())
+    {
+        Move->MaxWalkSpeed              = NormalWalkSpeed;
+        Move->bOrientRotationToMovement = true;
+    }
+    bUseControllerRotationYaw = false;
+
+    if (SpringArm)
+    {
+        SpringArm->TargetArmLength = NormalArmLength;
+        SpringArm->SocketOffset    = FVector::ZeroVector;
+    }
+
     UE_LOG(LogTemp, Verbose, TEXT("[ExplorationPawn] Aim OFF"));
 }
 
@@ -185,9 +221,28 @@ void AExplorationPawn::HandleFire()
 
 void AExplorationPawn::HandleConeShot()
 {
-    if (!IsGunReady()) { return; }
+    if (!IsGunReady())  { return; }
+    if (bIsCastingCone) { return; }
 
     CooldownRemaining = GunCooldown;
+
+    // Lock movement for the cast — kill in-flight velocity so the character
+    // doesn't slide, then clear the flag via timer. HandleMove early-outs
+    // while bIsCastingCone is true.
+    bIsCastingCone = true;
+    if (UCharacterMovementComponent* Move = GetCharacterMovement())
+    {
+        Move->StopMovementImmediately();
+    }
+    if (ConeCastLockDuration > 0.f && GetWorldTimerManager().IsTimerActive(ConeCastLockTimer) == false)
+    {
+        GetWorldTimerManager().SetTimer(ConeCastLockTimer, this,
+            &AExplorationPawn::EndConeCastLock, ConeCastLockDuration, false);
+    }
+    else if (ConeCastLockDuration <= 0.f)
+    {
+        bIsCastingCone = false;
+    }
 
     TArray<AEnemyEncounter*> Targets;
     GatherEncountersInCone(Targets);
@@ -252,42 +307,42 @@ void AExplorationPawn::GatherEncountersInCone(TArray<AEnemyEncounter*>& Out) con
     Out.Reset();
 
     const FVector Origin  = GetActorLocation();
-    // Use the controller forward (camera/look direction) for cone direction so
-    // it aims where the player is facing the camera.
+    // Use the controller forward (camera/look direction) so the cone aims
+    // where the player is mouse-looking, not where the character body faces.
     const FVector Forward = GetControlRotation().Vector();
     const float CosHalfAngle = FMath::Cos(FMath::DegreesToRadians(ConeHalfAngleDeg));
 
-    // Cheap broad-phase: sphere overlap at the cone's tip distance, then
-    // filter by angle.
-    TArray<FOverlapResult> Overlaps;
-    FCollisionShape Sphere = FCollisionShape::MakeSphere(ConeRange);
-    FCollisionQueryParams Params(SCENE_QUERY_STAT(ExplorationConeShot), false, this);
-
-    GetWorld()->OverlapMultiByChannel(
-        Overlaps,
-        Origin + Forward * (ConeRange * 0.5f),  // sweep centre slightly forward
-        FQuat::Identity,
-        ECC_WorldDynamic,
-        Sphere,
-        Params);
-
-    for (const FOverlapResult& Result : Overlaps)
+    // Direct actor iteration is simpler and more reliable than a sphere
+    // overlap query — encounters are rare (a handful per level) and we sidestep
+    // any collision-channel weirdness with their trigger sphere. Filter by
+    // distance, then by cone half-angle.
+    int32 Inspected = 0;
+    for (TActorIterator<AEnemyEncounter> It(GetWorld()); It; ++It)
     {
-        AEnemyEncounter* Encounter = Cast<AEnemyEncounter>(Result.GetActor());
+        AEnemyEncounter* Encounter = *It;
         if (!Encounter) { continue; }
+        ++Inspected;
 
-        const FVector ToTarget = (Encounter->GetActorLocation() - Origin);
+        const FVector ToTarget = Encounter->GetActorLocation() - Origin;
         const float Dist = ToTarget.Size();
         if (Dist > ConeRange) { continue; }
 
-        const FVector Dir = ToTarget.GetSafeNormal();
-        if (FVector::DotProduct(Forward, Dir) < CosHalfAngle) { continue; }
+        // If the encounter is essentially on top of us, count it without
+        // doing the angle check (avoids dividing a near-zero vector).
+        if (Dist > KINDA_SMALL_NUMBER)
+        {
+            const FVector Dir = ToTarget / Dist;
+            if (FVector::DotProduct(Forward, Dir) < CosHalfAngle) { continue; }
+        }
 
-        Out.AddUnique(Encounter);
+        Out.Add(Encounter);
     }
 
+    UE_LOG(LogTemp, Verbose, TEXT("[ExplorationPawn] Cone scan: %d encounters inspected, %d in cone"),
+        Inspected, Out.Num());
+
 #if !UE_BUILD_SHIPPING
-    // Visualize the cone for debugging — short-lived sphere at the tip.
+    // Yellow wireframe cone — visualises range + spread for debugging.
     DrawDebugCone(GetWorld(), Origin, Forward, ConeRange,
         FMath::DegreesToRadians(ConeHalfAngleDeg),
         FMath::DegreesToRadians(ConeHalfAngleDeg),
@@ -297,6 +352,9 @@ void AExplorationPawn::GatherEncountersInCone(TArray<AEnemyEncounter*>& Out) con
 
 void AExplorationPawn::HandleMove(const FInputActionValue& Value)
 {
+    // Cone-shot cast locks the character in place.
+    if (bIsCastingCone) { return; }
+
     const FVector2D Axis = Value.Get<FVector2D>();
     if (!Controller || Axis.IsNearlyZero()) { return; }
 
@@ -314,4 +372,9 @@ void AExplorationPawn::HandleLook(const FInputActionValue& Value)
     const FVector2D Axis = Value.Get<FVector2D>();
     AddControllerYawInput(Axis.X);
     AddControllerPitchInput(-Axis.Y);
+}
+
+void AExplorationPawn::EndConeCastLock()
+{
+    bIsCastingCone = false;
 }

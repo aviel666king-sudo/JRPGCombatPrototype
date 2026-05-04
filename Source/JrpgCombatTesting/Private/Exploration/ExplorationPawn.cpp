@@ -280,12 +280,23 @@ void AExplorationPawn::HandleConeShot()
 
 AEnemyEncounter* AExplorationPawn::TraceForEncounter() const
 {
-    // Trace origin: just above the character's chest so the debug line looks
-    // like it leaves the character, not the camera 400 units behind their head.
-    // Direction: control rotation forward — that's where the player is "looking"
-    // via mouse, which feels closer to crosshair-aim than character forward.
-    const FVector Start = GetActorLocation() + FVector(0.f, 0.f, 50.f);
-    const FVector End   = Start + GetControlRotation().Vector() * GunRange;
+    // Trace from the camera viewpoint so the bullet path matches the
+    // screen-center crosshair exactly. Using actor location instead would
+    // diverge from the crosshair once the camera is over-the-shoulder
+    // (right-offset spring arm during aim).
+    FVector CamLoc;
+    FRotator CamRot;
+    if (const AController* C = GetController())
+    {
+        C->GetPlayerViewPoint(CamLoc, CamRot);
+    }
+    else
+    {
+        CamLoc = GetActorLocation() + FVector(0.f, 0.f, 50.f);
+        CamRot = GetControlRotation();
+    }
+    const FVector Start = CamLoc;
+    const FVector End   = Start + CamRot.Vector() * GunRange;
 
     FCollisionQueryParams Params(SCENE_QUERY_STAT(ExplorationGunTrace), false, this);
 
@@ -294,8 +305,22 @@ AEnemyEncounter* AExplorationPawn::TraceForEncounter() const
         Hit, Start, End, ECC_Visibility, Params);
 
 #if !UE_BUILD_SHIPPING
-    // Green = hit an encounter, Red = missed. Lasts 1.5s for visibility.
-    DrawDebugLine(GetWorld(), Start, End, bHit ? FColor::Green : FColor::Red, false, 1.5f, 0, 1.f);
+    // Visual ray leaves the character's right hand (or chest as fallback) so
+    // it looks like the bullet comes from the gun, while the gameplay trace
+    // above still goes through the crosshair for accuracy.
+    FVector VisualStart;
+    if (USkeletalMeshComponent* MeshComp = GetMesh();
+        MeshComp && MeshComp->DoesSocketExist(TEXT("hand_r")))
+    {
+        VisualStart = MeshComp->GetSocketLocation(TEXT("hand_r"));
+    }
+    else
+    {
+        VisualStart = GetActorLocation() + FVector(0.f, 0.f, 50.f);
+    }
+    const FVector VisualEnd = bHit ? Hit.ImpactPoint : End;
+    DrawDebugLine(GetWorld(), VisualStart, VisualEnd,
+        bHit ? FColor::Green : FColor::Red, false, 1.5f, 0, 1.f);
 #endif
 
     if (!bHit) { return nullptr; }
@@ -342,8 +367,16 @@ void AExplorationPawn::GatherEncountersInCone(TArray<AEnemyEncounter*>& Out) con
         Inspected, Out.Num());
 
 #if !UE_BUILD_SHIPPING
-    // Yellow wireframe cone — visualises range + spread for debugging.
-    DrawDebugCone(GetWorld(), Origin, Forward, ConeRange,
+    // Yellow wireframe cone — visualises range + spread. Draw from the
+    // character's right hand so it looks like it leaves the gun, not the
+    // actor pivot at their feet.
+    FVector ConeVisualOrigin = Origin;
+    if (USkeletalMeshComponent* MeshComp = GetMesh();
+        MeshComp && MeshComp->DoesSocketExist(TEXT("hand_r")))
+    {
+        ConeVisualOrigin = MeshComp->GetSocketLocation(TEXT("hand_r"));
+    }
+    DrawDebugCone(GetWorld(), ConeVisualOrigin, Forward, ConeRange,
         FMath::DegreesToRadians(ConeHalfAngleDeg),
         FMath::DegreesToRadians(ConeHalfAngleDeg),
         12, FColor::Yellow, false, 1.5f, 0, 1.f);

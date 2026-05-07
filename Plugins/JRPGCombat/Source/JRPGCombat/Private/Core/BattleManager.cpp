@@ -210,6 +210,10 @@ void ABattleManager::Phase_Initialize()
 
         auto TeleportToSpawn = [this](ACombatantBase* C, AActor* SpawnPoint)
         {
+            // Remember which platform this combatant landed on so BP can use it
+            // as a stable world anchor (floating damage numbers, status icons).
+            C->CurrentSpawnPoint = SpawnPoint;
+
             const FVector PadLoc = SpawnPoint->GetActorLocation();
 
             // Trace straight down from high above to find whatever surface

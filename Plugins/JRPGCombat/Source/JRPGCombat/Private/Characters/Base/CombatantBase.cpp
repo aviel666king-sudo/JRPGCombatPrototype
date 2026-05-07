@@ -191,6 +191,8 @@ void ACombatantBase::ApplyDamage(FDamagePayload& Payload)
         {
             Payload.Source->StatusEffectManager->NotifyDealDamage(Payload);
         }
+        // Fire UI feedback so an "ABSORB" tag can pop with the heal amount.
+        BP_OnDamageResolved(Payload);
         return;
     }
 
@@ -228,6 +230,10 @@ void ACombatantBase::ApplyDamage(FDamagePayload& Payload)
     {
         Payload.Source->StatusEffectManager->NotifyDealDamage(Payload);
     }
+
+    // Fire UI feedback — payload now has ResolvedDamage, HitResistance,
+    // Element, and Source for the floating-number widget to read.
+    BP_OnDamageResolved(Payload);
 }
 
 // -----------------------------------------------------------------------------

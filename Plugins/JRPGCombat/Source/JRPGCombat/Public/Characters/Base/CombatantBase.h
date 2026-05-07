@@ -76,6 +76,14 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Combatant")
     virtual void InitializeForBattle();
 
+    /** The arena spawn-slot actor (grass-pad / platform) this combatant was
+     *  teleported to at battle start. Set by ABattleManager::TeleportToSpawn.
+     *  BP can use it as a stable world anchor for UI (floating damage numbers,
+     *  status icons) instead of relying on the actor's own location. Null
+     *  outside of combat. */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combatant|Battle")
+    TObjectPtr<AActor> CurrentSpawnPoint;
+
     // -------------------------------------------------------------------------
     //  Turn callbacks
     // -------------------------------------------------------------------------
@@ -108,6 +116,17 @@ public:
     UFUNCTION(BlueprintImplementableEvent, Category = "Combatant|Damage",
               meta = (DisplayName = "On Damage Taken"))
     void BP_OnDamageTaken(ACombatantBase* Source, float FinalDamage, EDamageType DamageType);
+
+    /** Rich version of OnDamageTaken — fires with the full payload so Blueprint
+     *  can spawn floating damage numbers, resistance tags ("Weak!", "Resist",
+     *  "Block", "Absorb"), and elemental icons.
+     *
+     *  Fires after damage (or absorb-healing) has been applied and resources
+     *  spent. Payload.ResolvedDamage is the final amount; Payload.HitResistance
+     *  is the target's reaction; Payload.Element is the element used. */
+    UFUNCTION(BlueprintImplementableEvent, Category = "Combatant|Damage",
+              meta = (DisplayName = "On Damage Resolved"))
+    void BP_OnDamageResolved(const FDamagePayload& Payload);
 
     // -------------------------------------------------------------------------
     //  Healing — C++ pipeline

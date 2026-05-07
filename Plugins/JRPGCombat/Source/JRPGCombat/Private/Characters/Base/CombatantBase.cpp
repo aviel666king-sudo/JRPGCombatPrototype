@@ -7,9 +7,12 @@
 #include "Components/StatusEffectManagerComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/WidgetComponent.h"
+#include "Blueprint/UserWidget.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "UObject/ConstructorHelpers.h"
+#include "TimerManager.h"
 
 ACombatantBase::ACombatantBase()
 {
@@ -72,11 +75,181 @@ ACombatantBase::ACombatantBase()
 
     AbilityManager      = CreateDefaultSubobject<UAbilityManagerComponent>(TEXT("AbilityManager"));
     StatusEffectManager = CreateDefaultSubobject<UStatusEffectManagerComponent>(TEXT("StatusEffectManager"));
+
+    // -------------------------------------------------------------------------
+    //  Damage number widget stack — auto-set up for every combatant
+    //  Pool of slots stacked vertically so multiple hits can pop at once
+    //  (multi-hit attacks, status-tick damage during the same animation, etc.)
+    // -------------------------------------------------------------------------
+    static ConstructorHelpers::FClassFinder<UUserWidget> DefaultDamageWidget(
+        TEXT("/Game/Combat/WBP_DamageNumber.WBP_DamageNumber_C"));
+    if (DefaultDamageWidget.Succeeded())
+    {
+        DamageWidgetClass = DefaultDamageWidget.Class;
+    }
+
+    constexpr int32 NumDamageWidgetSlots = 4;
+    DamageWidgets.Reserve(NumDamageWidgetSlots);
+
+    for (int32 i = 0; i < NumDamageWidgetSlots; ++i)
+    {
+        const FName SlotName = *FString::Printf(TEXT("DamageWidget_%d"), i);
+        UWidgetComponent* W = CreateDefaultSubobject<UWidgetComponent>(SlotName);
+        W->SetupAttachment(CapsuleComponent);
+        // Stagger the slots vertically — slot 0 is the base height, each
+        // subsequent slot sits one StackSpacing higher. BeginPlay re-applies
+        // these in case a BP overrode DamageWidgetBaseZ / StackSpacing.
+        W->SetRelativeLocation(FVector(0.f, 0.f, 200.f + i * 60.f));
+        W->SetWidgetSpace(EWidgetSpace::Screen);
+        W->SetDrawAtDesiredSize(true);
+        W->SetVisibility(false);
+        W->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        if (DamageWidgetClass)
+        {
+            W->SetWidgetClass(DamageWidgetClass);
+        }
+        DamageWidgets.Add(W);
+    }
 }
 
 void ACombatantBase::BeginPlay()
 {
     Super::BeginPlay();
+
+    // Apply BP-overridden settings (constructor defaults may have been changed
+    // via Class Defaults on a derived BP), and ensure all slots start hidden.
+    DamageWidgetHideTimers.SetNum(DamageWidgets.Num());
+
+    for (int32 i = 0; i < DamageWidgets.Num(); ++i)
+    {
+        if (UWidgetComponent* W = DamageWidgets[i])
+        {
+            W->SetRelativeLocation(FVector(
+                0.f, 0.f, DamageWidgetBaseZ + i * DamageWidgetStackSpacing));
+
+            if (DamageWidgetClass && W->GetWidgetClass() != DamageWidgetClass)
+            {
+                W->SetWidgetClass(DamageWidgetClass);
+            }
+            W->SetVisibility(false);
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+//  Damage number widget — fired automatically by ApplyDamage
+// -----------------------------------------------------------------------------
+
+namespace
+{
+    // Helper: write a uint8/int enum value to either an FByteProperty or
+    // FEnumProperty on the given UObject by name. BP-defined enums can be
+    // backed by either property type depending on UE version, so we try both.
+    void SetEnumPropertyValue(UObject* Obj, const TCHAR* PropName, int64 Value)
+    {
+        UClass* C = Obj->GetClass();
+        if (FByteProperty* BP = FindFProperty<FByteProperty>(C, PropName))
+        {
+            BP->SetPropertyValue_InContainer(Obj, static_cast<uint8>(Value));
+        }
+        else if (FEnumProperty* EP = FindFProperty<FEnumProperty>(C, PropName))
+        {
+            if (FNumericProperty* Underlying = EP->GetUnderlyingProperty())
+            {
+                void* Ptr = EP->ContainerPtrToValuePtr<void>(Obj);
+                Underlying->SetIntPropertyValue(Ptr, Value);
+            }
+        }
+    }
+}
+
+void ACombatantBase::ShowDamageNumber(const FDamagePayload& Payload)
+{
+    if (DamageWidgets.Num() == 0) return;
+
+    // Find the lowest unused slot (so newer numbers appear at the bottom of
+    // the stack and existing visible numbers naturally end up "above" them).
+    int32 SlotIndex = INDEX_NONE;
+    for (int32 i = 0; i < DamageWidgets.Num(); ++i)
+    {
+        if (DamageWidgets[i] && !DamageWidgets[i]->IsVisible())
+        {
+            SlotIndex = i;
+            break;
+        }
+    }
+
+    // All slots busy — overwrite the oldest (round-robin cursor).
+    if (SlotIndex == INDEX_NONE)
+    {
+        SlotIndex = NextDamageWidgetIndex % DamageWidgets.Num();
+    }
+    NextDamageWidgetIndex = (SlotIndex + 1) % DamageWidgets.Num();
+
+    UWidgetComponent* DW = DamageWidgets[SlotIndex];
+    if (!DW) return;
+
+    UUserWidget* W = DW->GetUserWidgetObject();
+    if (!W) return;
+
+    // DamageAmount — UE5 BP "float" can be either FFloatProperty (32-bit)
+    // or FDoubleProperty (64-bit) depending on settings; try both.
+    if (FFloatProperty* FloatProp = FindFProperty<FFloatProperty>(W->GetClass(), TEXT("DamageAmount")))
+    {
+        FloatProp->SetPropertyValue_InContainer(W, Payload.ResolvedDamage);
+    }
+    else if (FDoubleProperty* DoubleProp = FindFProperty<FDoubleProperty>(W->GetClass(), TEXT("DamageAmount")))
+    {
+        DoubleProp->SetPropertyValue_InContainer(W, static_cast<double>(Payload.ResolvedDamage));
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[ShowDamageNumber] DamageAmount property not found on %s — "
+                 "check the variable name in the widget BP."),
+            *W->GetClass()->GetName());
+    }
+
+    // Element / Resistance (enums — BP enums can be Byte- or Enum-property)
+    SetEnumPropertyValue(W, TEXT("Element"), static_cast<int64>(Payload.Element));
+    SetEnumPropertyValue(W, TEXT("Resistance"), static_cast<int64>(Payload.HitResistance));
+
+    // Trigger PlayPopup on the widget BP
+    if (UFunction* Func = W->FindFunction(TEXT("PlayPopup")))
+    {
+        W->ProcessEvent(Func, nullptr);
+    }
+
+    DW->SetVisibility(true);
+
+    // Schedule per-slot hide
+    if (UWorld* World = GetWorld())
+    {
+        World->GetTimerManager().ClearTimer(DamageWidgetHideTimers[SlotIndex]);
+
+        TWeakObjectPtr<ACombatantBase> WeakThis(this);
+        const int32 CapturedSlot = SlotIndex;
+
+        World->GetTimerManager().SetTimer(
+            DamageWidgetHideTimers[SlotIndex],
+            FTimerDelegate::CreateLambda([WeakThis, CapturedSlot]()
+            {
+                if (ACombatantBase* Self = WeakThis.Get())
+                {
+                    Self->HideDamageWidgetSlot(CapturedSlot);
+                }
+            }),
+            DamageWidgetVisibleDuration,
+            false);
+    }
+}
+
+void ACombatantBase::HideDamageWidgetSlot(int32 SlotIndex)
+{
+    if (DamageWidgets.IsValidIndex(SlotIndex) && DamageWidgets[SlotIndex])
+    {
+        DamageWidgets[SlotIndex]->SetVisibility(false);
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -193,6 +366,7 @@ void ACombatantBase::ApplyDamage(FDamagePayload& Payload)
         }
         // Fire UI feedback so an "ABSORB" tag can pop with the heal amount.
         BP_OnDamageResolved(Payload);
+        ShowDamageNumber(Payload);
         return;
     }
 
@@ -234,6 +408,7 @@ void ACombatantBase::ApplyDamage(FDamagePayload& Payload)
     // Fire UI feedback — payload now has ResolvedDamage, HitResistance,
     // Element, and Source for the floating-number widget to read.
     BP_OnDamageResolved(Payload);
+    ShowDamageNumber(Payload);
 }
 
 // -----------------------------------------------------------------------------

@@ -10,6 +10,8 @@ class UStatusEffectManagerComponent;
 class UCapsuleComponent;
 class USkeletalMeshComponent;
 class UAnimMontage;
+class UWidgetComponent;
+class UUserWidget;
 
 UCLASS(Abstract, BlueprintType, Blueprintable)
 class JRPGCOMBAT_API ACombatantBase : public AActor
@@ -68,6 +70,35 @@ public:
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combatant|Components")
     TObjectPtr<UStatusEffectManagerComponent> StatusEffectManager;
+
+    // -------------------------------------------------------------------------
+    //  Damage Number Widget Stack (floating text above head on hit)
+    //  Lives on every combatant automatically — no per-BP wiring needed.
+    //  We keep a small pool of widget components stacked vertically. When
+    //  damage hits, the lowest unused slot is chosen so multiple numbers can
+    //  appear at once for sequence/multi-hit attacks. Override defaults in BP
+    //  if a character needs a different height, duration, or stack count.
+    // -------------------------------------------------------------------------
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combatant|UI")
+    TArray<TObjectPtr<UWidgetComponent>> DamageWidgets;
+
+    /** Widget class used by every slot in DamageWidgets. Defaults to
+     *  WBP_DamageNumber via ConstructorHelpers; override per BP if needed. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combatant|UI")
+    TSubclassOf<UUserWidget> DamageWidgetClass;
+
+    /** How long each damage number stays on screen after a hit. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combatant|UI")
+    float DamageWidgetVisibleDuration = 1.0f;
+
+    /** Local Z height (above the capsule pivot) of the lowest damage-number slot. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combatant|UI")
+    float DamageWidgetBaseZ = 200.f;
+
+    /** Vertical spacing between stacked damage numbers. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combatant|UI")
+    float DamageWidgetStackSpacing = 60.f;
 
     // -------------------------------------------------------------------------
     //  Battle setup
@@ -262,8 +293,23 @@ protected:
 
     virtual void BeginPlay() override;
 
+    /** Picks an unused (or oldest) widget slot, populates it with the hit's
+     *  data, makes it visible, and schedules its hide. Called automatically
+     *  by ApplyDamage — no per-BP wiring needed. */
+    void ShowDamageNumber(const FDamagePayload& Payload);
+
+    /** Hides a single damage-number slot. Called by the per-slot hide timer. */
+    void HideDamageWidgetSlot(int32 SlotIndex);
+
 private:
 
     UPROPERTY()
     TMap<EResourceType, FResourcePool> Resources;
+
+    /** One handle per slot in DamageWidgets (parallel array). */
+    TArray<FTimerHandle> DamageWidgetHideTimers;
+
+    /** Round-robin cursor — when all slots are busy and a new hit lands,
+     *  this slot gets overwritten (oldest visible). */
+    int32 NextDamageWidgetIndex = 0;
 };

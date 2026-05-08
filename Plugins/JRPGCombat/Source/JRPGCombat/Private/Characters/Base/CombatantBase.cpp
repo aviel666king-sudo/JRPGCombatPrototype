@@ -190,7 +190,23 @@ void ACombatantBase::ShowDamageNumber(const FDamagePayload& Payload)
     if (!DW) return;
 
     UUserWidget* W = DW->GetUserWidgetObject();
-    if (!W) return;
+    if (!W)
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[ShowDamageNumber] %s slot %d has no UserWidget instance — "
+                 "WidgetClass=%s. Did the BP override DamageWidgets to empty or "
+                 "change WidgetClass to None?"),
+            *GetName(), SlotIndex,
+            DW->GetWidgetClass() ? *DW->GetWidgetClass()->GetName() : TEXT("None"));
+        return;
+    }
+
+    UE_LOG(LogTemp, Warning,
+        TEXT("[ShowDamageNumber] %s slot %d widget=%s sending Damage=%.1f Element=%d Resist=%d"),
+        *GetName(), SlotIndex, *W->GetClass()->GetName(),
+        Payload.ResolvedDamage,
+        static_cast<int32>(Payload.Element),
+        static_cast<int32>(Payload.HitResistance));
 
     // DamageAmount — UE5 BP "float" can be either FFloatProperty (32-bit)
     // or FDoubleProperty (64-bit) depending on settings; try both.

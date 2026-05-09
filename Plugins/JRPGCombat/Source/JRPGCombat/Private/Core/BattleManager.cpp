@@ -17,6 +17,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 #include "EngineUtils.h"
+#include "Core/DangerManager.h"
 
 ABattleManager::ABattleManager()
 {
@@ -28,6 +29,12 @@ ABattleManager::ABattleManager()
 void ABattleManager::BeginPlay()
 {
     Super::BeginPlay();
+
+    // Protocols persist across battles — initialize once at level start, then
+    // RestPoint actors (Phase D) are responsible for refilling to max. We
+    // intentionally do NOT call this from Phase_Initialize so charges spent in
+    // one battle stay spent for the next one.
+    if (ProtocolManager) { ProtocolManager->InitializeCharges(); }
 }
 
 // -----------------------------------------------------------------------------
@@ -40,6 +47,15 @@ void ABattleManager::StartBattle(const TArray<ACombatantBase*>& PlayerParty,
     AllCombatants.Reset();
     for (ACombatantBase* C : PlayerParty) { if (C) { AllCombatants.Add(C); } }
     for (ACombatantBase* C : EnemyParty)  { if (C) { AllCombatants.Add(C); } }
+
+    if (UGameInstance* GI = GetGameInstance())
+    {
+        if (UDangerManager* Danger = GI->GetSubsystem<UDangerManager>())
+        {
+            Danger->SetInBattle(true);
+        }
+    }
+
     Phase_Initialize();
 }
 
@@ -139,7 +155,9 @@ void ABattleManager::Phase_Initialize()
 {
     SetPhase(EBattlePhase::Initialization);
 
-    if (ProtocolManager) { ProtocolManager->InitializeCharges(); }
+    // (Protocol charges are NOT re-initialized here — they persist between
+    //  battles. See ABattleManager::BeginPlay for first-time init, and the
+    //  RestPoint actor in Phase D for the refill mechanism.)
 
     TurnOrderManager = NewObject<UTurnOrderManager>(this);
 
@@ -279,8 +297,11 @@ void ABattleManager::Phase_Initialize()
 
 void ABattleManager::Phase_StartNextTurn()
 {
-    if (CheckVictory()) { SetPhase(EBattlePhase::Victory);  OnBattleEnded.Broadcast(true);  return; }
-    if (CheckDefeat())  { SetPhase(EBattlePhase::Defeat);   OnBattleEnded.Broadcast(false); return; }
+    // Victory / defeat detection moved into TryResolveBattleEnd so every code
+    // path that ends combat (action-driven, status-tick, gun shot in aim mode)
+    // runs the same cleanup. Without this, gun-shot wins fired OnBattleEnded
+    // but skipped the danger-level increment.
+    if (TryResolveBattleEnd()) { return; }
 
     SetPhase(EBattlePhase::TurnStart);
 
@@ -864,8 +885,60 @@ bool ABattleManager::CheckDefeat() const
 
 bool ABattleManager::TryResolveBattleEnd()
 {
-    if (CheckVictory()) { SetPhase(EBattlePhase::Victory); OnBattleEnded.Broadcast(true);  return true; }
-    if (CheckDefeat())  { SetPhase(EBattlePhase::Defeat);  OnBattleEnded.Broadcast(false); return true; }
+    if (CheckVictory())
+    {
+        SetPhase(EBattlePhase::Victory);
+
+        int32 DangerLevel = 0;
+        float DangerMult  = 1.f;
+        if (UGameInstance* GI = GetGameInstance())
+        {
+            if (UDangerManager* Danger = GI->GetSubsystem<UDangerManager>())
+            {
+                Danger->SetInBattle(false);
+                // TODO(rewards): apply 2x * MergeLevel multiplier when reward
+                // system lands. MergeLevel will come from the encounter that
+                // started this battle (Phase C).
+                Danger->IncrementDanger();
+                DangerLevel = Danger->GetCurrentLevel();
+                DangerMult  = Danger->GetStatMultiplier();
+            }
+        }
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(
+                -1, 4.f, FColor::Green,
+                FString::Printf(TEXT("VICTORY!  Danger Level %d  (x%.2f)"),
+                    DangerLevel, DangerMult));
+        }
+        // Safety net: snap the camera back to the controller's pawn. The
+        // GameMode also does this in HandleBattleEnded; doubling up is
+        // harmless and protects against arena cameras lingering if the
+        // GameMode wiring breaks.
+        if (CachedPlayerController)
+        {
+            if (APawn* Pawn = CachedPlayerController->GetPawn())
+            {
+                CachedPlayerController->SetViewTargetWithBlend(Pawn, 0.25f, VTBlend_Cubic);
+            }
+        }
+
+        OnBattleEnded.Broadcast(true);
+        return true;
+    }
+    if (CheckDefeat())
+    {
+        SetPhase(EBattlePhase::Defeat);
+        if (UGameInstance* GI = GetGameInstance())
+        {
+            if (UDangerManager* Danger = GI->GetSubsystem<UDangerManager>())
+            {
+                Danger->SetInBattle(false);
+            }
+        }
+        OnBattleEnded.Broadcast(false);
+        return true;
+    }
     return false;
 }
 
@@ -1031,17 +1104,35 @@ void ABattleManager::EndGunAimMode()
     GunAimYawOffset   = 0.f;
     GunAimPitchOffset = 0.f;
 
-    // Restore cursor visibility.
-    if (CachedPlayerController)
+    // If we're called from FireGunAimShot's victory branch, the GameMode has
+    // already taken over (camera, cursor, input mode) for exploration. Anything
+    // we do here would fight that. Specifically:
+    //  - bShowMouseCursor=true would put the OS cursor on screen and break
+    //    RMB-to-aim / LMB-to-fire on the exploration pawn
+    //  - FocusCameraOnPlayer would blend the view target back to the arena
+    //    camera, leaving the camera stuck after victory
+    //  - Broadcasting OnGunAimChanged(false) reaches the CombatHUDWidget,
+    //    which has been RemoveFromParent'd but is still alive and bound;
+    //    its handler turns the cursor back on (the same root cause as #1)
+    //
+    // Skip all three when the battle is already resolved — the HUD is gone
+    // and the GameMode owns the post-combat input/camera state.
+    const bool bBattleStillActive =
+        CurrentPhase != EBattlePhase::Victory &&
+        CurrentPhase != EBattlePhase::Defeat;
+
+    if (bBattleStillActive)
     {
-        CachedPlayerController->bShowMouseCursor = true;
+        if (CachedPlayerController)
+        {
+            CachedPlayerController->bShowMouseCursor = true;
+        }
+
+        if (ActiveCombatant) { FocusCameraOnPlayer(ActiveCombatant, 0.30f); }
+        else                 { ReturnCameraToBase(0.30f); }
+
+        OnGunAimChanged.Broadcast(false);
     }
-
-    // Return camera to the acting player character.
-    if (ActiveCombatant) { FocusCameraOnPlayer(ActiveCombatant, 0.30f); }
-    else                 { ReturnCameraToBase(0.30f); }
-
-    OnGunAimChanged.Broadcast(false);
 }
 
 void ABattleManager::UpdateGunAimRotation(float DeltaYaw, float DeltaPitch)

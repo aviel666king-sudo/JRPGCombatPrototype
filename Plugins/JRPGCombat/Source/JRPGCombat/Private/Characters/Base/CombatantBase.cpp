@@ -274,10 +274,24 @@ void ACombatantBase::HideDamageWidgetSlot(int32 SlotIndex)
 
 void ACombatantBase::InitializeForBattle()
 {
-    Resources.Reset();
+    // HP persists between battles — only initialize on first call (Resources
+    // map is empty for fresh-spawned enemies, populated for persistent player
+    // party actors). RestPoint actors (Phase D) are responsible for refilling
+    // HP back to max outside of battle.
+    if (!Resources.Contains(EResourceType::HP))
+    {
+        Resources.Add(EResourceType::HP, FResourcePool(BaseStats.MaxHP));
+    }
+    else
+    {
+        // Existing HP carries over — but if MaxHP changed (e.g. danger scaling
+        // raised an enemy's MaxHP), bump the cap so Current is still valid.
+        FResourcePool& HP = Resources[EResourceType::HP];
+        HP.Max = BaseStats.MaxHP;
+        HP.Current = FMath::Min(HP.Current, HP.Max);
+    }
 
-    Resources.Add(EResourceType::HP, FResourcePool(BaseStats.MaxHP));
-
+    // AP resets every battle — it's the per-battle action currency.
     {
         FResourcePool APPool;
         APPool.Max     = BaseStats.MaxAP;
@@ -285,6 +299,7 @@ void ACombatantBase::InitializeForBattle()
         Resources.Add(EResourceType::AP, APPool);
     }
 
+    // MP also resets to 0 each battle (built up during combat by minigames etc.).
     Resources.Add(EResourceType::MP, FResourcePool(0.f));
 
     AbilityManager->InitializeAbilities(this);

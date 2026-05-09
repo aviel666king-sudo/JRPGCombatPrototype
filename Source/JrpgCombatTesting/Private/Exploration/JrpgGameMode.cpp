@@ -26,6 +26,13 @@ void AJrpgGameMode::BeginPlay()
     if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
     {
         CachedExplorationPawn = Cast<AExplorationPawn>(PC->GetPawn());
+
+        // Disable the engine's auto-camera-target system. UE will otherwise
+        // try to auto-pick a CameraActor with "Auto-Activate For Player 0"
+        // every time the controller's state changes, fighting our explicit
+        // SetViewTarget calls. We manage view targets ourselves (BattleManager
+        // for combat cameras, this GameMode for the exploration pawn).
+        PC->bAutoManageActiveCameraTarget = false;
     }
 
     // Hide every combatant placed in the level at startup. Player party
@@ -236,6 +243,12 @@ void AJrpgGameMode::HandleBattleEnded(bool bVictory)
             CachedExplorationPawn->SetActorLocationAndRotation(PawnReturnLocation, PawnReturnRotation);
             CachedExplorationPawn->SetActorHiddenInGame(false);
             CachedExplorationPawn->SetActorEnableCollision(true);
+
+            // Switch the camera back from the arena camera to the pawn.
+            if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
+            {
+                PC->SetViewTargetWithBlend(CachedExplorationPawn, 0.25f, VTBlend_Cubic);
+            }
         }
 
         WorldMode = EWorldMode::Exploring;

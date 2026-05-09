@@ -27,4 +27,12 @@ class JRPGCOMBAT_API AEnemyCombatant : public ACombatantBase
 public:
 
     AEnemyCombatant();
+
+    /** Bosses ignore the world danger multiplier and are un-assassinatable. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combatant|Boss")
+    bool bIsBoss = false;
+
+    /** Reads UDangerManager and scales BaseStats by the current multiplier
+     *  (skipped if bIsBoss). Then forwards to ACombatantBase::InitializeForBattle. */
+    virtual void InitializeForBattle() override;
 };

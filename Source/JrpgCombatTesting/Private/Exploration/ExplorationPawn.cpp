@@ -9,12 +9,16 @@
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "InputActionValue.h"
+#include "InputCoreTypes.h"  // EKeys for the C-key direct fallback
 #include "Blueprint/UserWidget.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
 #include "Engine/OverlapResult.h"
 #include "DrawDebugHelpers.h"
 #include "EngineUtils.h"  // TActorIterator
+#include "Exploration/JrpgGameMode.h"
+#include "Exploration/EnemyDetectionComponent.h"
+#include "Kismet/GameplayStatics.h"
 
 AExplorationPawn::AExplorationPawn()
 {
@@ -39,6 +43,7 @@ AExplorationPawn::AExplorationPawn()
         Move->JumpZVelocity             = 600.f;
         Move->AirControl                = 0.2f;
         Move->MaxWalkSpeed              = 500.f;
+        Move->NavAgentProps.bCanCrouch  = true;  // required for Crouch()/UnCrouch()
     }
 
     // -------------------------------------------------------------------------
@@ -60,6 +65,15 @@ AExplorationPawn::AExplorationPawn()
 void AExplorationPawn::BeginPlay()
 {
     Super::BeginPlay();
+
+    // Force-enable crouch at runtime so the BP's saved NavAgentProps can't
+    // disable it. The constructor already sets this, but existing BP assets
+    // serialized before that line have bCanCrouch=false baked in.
+    if (UCharacterMovementComponent* Move = GetCharacterMovement())
+    {
+        Move->NavAgentProps.bCanCrouch = true;
+        Move->SetCrouchedHalfHeight(48.f);  // standard half-capsule when crouched
+    }
 
     // Register the Enhanced Input mapping context for this pawn.
     if (APlayerController* PC = Cast<APlayerController>(GetController()))
@@ -143,6 +157,27 @@ void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
         {
             EIC->BindAction(ConeShotAction, ETriggerEvent::Started, this, &AExplorationPawn::HandleConeShot);
         }
+        // Crouch — toggled on key-down. Prefer the Enhanced Input asset if the
+        // designer assigned one in BP defaults; otherwise fall through to the
+        // direct-key fallback below so C still works out of the box.
+        if (CrouchAction)
+        {
+            EIC->BindAction(CrouchAction, ETriggerEvent::Started, this, &AExplorationPawn::HandleCrouchToggle);
+        }
+    }
+
+    // Direct-key fallback for crouch — binds the C key on the raw input
+    // component so the toggle works even if no IA_Crouch asset has been
+    // wired into IMC_Exploration / BP_ExploartionPawn. Safe to leave in
+    // permanently: if both bindings exist, pressing C still toggles once
+    // because the Enhanced Input action fires the same handler and we just
+    // get one extra call per press (idempotent on the boolean toggle... no,
+    // actually it would double-toggle). To avoid double-toggle, this
+    // fallback only binds when CrouchAction is unassigned.
+    if (PlayerInputComponent && !CrouchAction)
+    {
+        PlayerInputComponent->BindKey(EKeys::C, IE_Pressed, this, &AExplorationPawn::HandleCrouchToggle);
+        UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Crouch bound to C key via direct fallback (no IA_Crouch assigned)"));
     }
 }
 
@@ -224,6 +259,16 @@ void AExplorationPawn::HandleConeShot()
     if (!IsGunReady())  { return; }
     if (bIsCastingCone) { return; }
 
+    // Don't trigger a new encounter while one is already starting / underway.
+    // Without this, an overlap-triggered combat that fires the same frame as
+    // a cone shot would race: the cone shot lands on the same encounter mid-
+    // teleport and TriggerCombat → BeginEncounter prints
+    // "BeginEncounter ignored — already in combat".
+    if (AJrpgGameMode* GM = Cast<AJrpgGameMode>(UGameplayStatics::GetGameMode(this)))
+    {
+        if (GM->GetWorldMode() != EWorldMode::Exploring) { return; }
+    }
+
     CooldownRemaining = GunCooldown;
 
     // Lock movement for the cast — kill in-flight velocity so the character
@@ -272,6 +317,25 @@ void AExplorationPawn::HandleConeShot()
             *Closest->GetName());
         Closest->TriggerCombat(/*bPlayerHasInitiative=*/true);
     }
+}
+
+void AExplorationPawn::HandleCrouchToggle()
+{
+    bIsCrouching = !bIsCrouching;
+
+    // Visual crouch — lowers the capsule via ACharacter's built-in system.
+    // Requires Move->NavAgentProps.bCanCrouch = true (set in the constructor).
+    if (bIsCrouching) { Crouch();   }
+    else              { UnCrouch(); }
+
+    // Push the new stealth multiplier to UEnemyDetectionComponent — every
+    // detection component reads it each tick when computing effective
+    // distance/radius.
+    const float Mult = bIsCrouching ? CrouchDetectionMultiplier : 1.f;
+    UEnemyDetectionComponent::SetPlayerStealthMultiplier(this, Mult);
+
+    UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Crouch %s (stealth multiplier x%.2f)"),
+        bIsCrouching ? TEXT("ON") : TEXT("OFF"), Mult);
 }
 
 // -----------------------------------------------------------------------------

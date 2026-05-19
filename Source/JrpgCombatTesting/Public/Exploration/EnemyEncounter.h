@@ -6,9 +6,12 @@
 
 class USphereComponent;
 class UStaticMeshComponent;
+class UWidgetComponent;
 class ACombatantBase;
 class ABattleArena;
 class AExplorationPawn;
+class UEnemyDetectionComponent;
+class UDetectionMeterWidget;
 
 /**
  * AEnemyEncounter
@@ -44,6 +47,32 @@ public:
     /** Player overlap trigger that fires the encounter. */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Encounter")
     TObjectPtr<USphereComponent> TriggerSphere;
+
+    /** Vision / LOS detection (Phase B). Auto-created on every encounter so
+     *  per-BP wiring isn't required. Tunables (radius, cone, distance, time)
+     *  are editable in the BP defaults under Detection|Vision. */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Encounter")
+    TObjectPtr<UEnemyDetectionComponent> Detection;
+
+    /** Floating detection-meter UI (Phase B2). Hosts UDetectionMeterWidget /
+     *  WBP_DetectionMeter in world-space, billboarded toward the camera.
+     *  Set DetectionMeterWidgetClass below to the WBP asset in BP defaults. */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Encounter")
+    TObjectPtr<UWidgetComponent> DetectionMeterComponent;
+
+    /** UMG asset that derives from UDetectionMeterWidget. Assign WBP_DetectionMeter
+     *  in BP_EnemyEncounter defaults — if left null, no meter is shown. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Encounter|UI")
+    TSubclassOf<UDetectionMeterWidget> DetectionMeterWidgetClass;
+
+    /** How far above the encounter root the meter floats (cm). */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Encounter|UI",
+              meta = (ClampMin = "0.0"))
+    float DetectionMeterHeight = 220.f;
+
+    /** Draw size of the world-space meter widget in pixels. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Encounter|UI")
+    FVector2D DetectionMeterDrawSize = FVector2D(200.f, 32.f);
 
     // -------------------------------------------------------------------------
     //  Configuration — set per-encounter in the level Details panel
@@ -92,6 +121,7 @@ public:
 
 protected:
 
+    virtual void BeginPlay() override;
     virtual void Tick(float DeltaTime) override;
 
     UFUNCTION()

@@ -1,8 +1,11 @@
 #include "Exploration/EnemyEncounter.h"
 #include "Exploration/JrpgGameMode.h"
 #include "Exploration/ExplorationPawn.h"
+#include "Exploration/EnemyDetectionComponent.h"
+#include "Exploration/DetectionMeterWidget.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/WidgetComponent.h"
 #include "Kismet/GameplayStatics.h"
 
 AEnemyEncounter::AEnemyEncounter()
@@ -35,11 +38,104 @@ AEnemyEncounter::AEnemyEncounter()
     TriggerSphere->SetGenerateOverlapEvents(true);
 
     TriggerSphere->OnComponentBeginOverlap.AddDynamic(this, &AEnemyEncounter::HandleTriggerOverlap);
+
+    // -------------------------------------------------------------------------
+    //  Detection (Phase B) — auto-attached so all encounters get vision
+    //  without per-BP wiring. Tunables in BP defaults under Detection|Vision.
+    // -------------------------------------------------------------------------
+
+    Detection = CreateDefaultSubobject<UEnemyDetectionComponent>(TEXT("Detection"));
+
+    // -------------------------------------------------------------------------
+    //  Detection meter UI (Phase B2) — world-space widget floating overhead,
+    //  billboarded toward the camera. Class is assigned in BP defaults
+    //  (DetectionMeterWidgetClass = WBP_DetectionMeter).
+    // -------------------------------------------------------------------------
+
+    DetectionMeterComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("DetectionMeter"));
+    DetectionMeterComponent->SetupAttachment(RootComponent);
+    DetectionMeterComponent->SetRelativeLocation(FVector(0.f, 0.f, DetectionMeterHeight));
+
+    // World space is far more reliable than Screen — Screen mode has quirky
+    // viewport/scale rendering issues that can leave the widget invisible.
+    // World space renders as a 3D plane that we ticker-rotate to face the camera.
+    DetectionMeterComponent->SetWidgetSpace(EWidgetSpace::World);
+    DetectionMeterComponent->SetDrawSize(DetectionMeterDrawSize);
+
+    // Scale down the 3D plane so 200px of widget ≈ 100cm wide in world space.
+    DetectionMeterComponent->SetRelativeScale3D(FVector(0.5f));
+    DetectionMeterComponent->SetTwoSided(true);  // visible from either side
+    DetectionMeterComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    DetectionMeterComponent->SetGenerateOverlapEvents(false);
+    DetectionMeterComponent->SetVisibility(true);
+}
+
+void AEnemyEncounter::BeginPlay()
+{
+    Super::BeginPlay();
+
+    // Apply BP-tuned values to the widget component (constructor uses defaults
+    // before BP overrides land).
+    if (DetectionMeterComponent)
+    {
+        DetectionMeterComponent->SetRelativeLocation(FVector(0.f, 0.f, DetectionMeterHeight));
+        DetectionMeterComponent->SetDrawSize(DetectionMeterDrawSize);
+
+        // Assign the WBP class and bind the widget to our detection component.
+        if (DetectionMeterWidgetClass)
+        {
+            DetectionMeterComponent->SetWidgetClass(DetectionMeterWidgetClass);
+
+            // Force the user widget to spawn now so we can bind it. Without this,
+            // GetUserWidgetObject() returns nullptr until the first tick.
+            DetectionMeterComponent->InitWidget();
+
+            if (UDetectionMeterWidget* Meter =
+                    Cast<UDetectionMeterWidget>(DetectionMeterComponent->GetUserWidgetObject()))
+            {
+                Meter->BindToDetection(Detection);
+                UE_LOG(LogTemp, Warning, TEXT("[EnemyEncounter] %s: meter widget spawned and bound."),
+                    *GetName());
+            }
+            else
+            {
+                UE_LOG(LogTemp, Warning,
+                    TEXT("[EnemyEncounter] %s: DetectionMeterWidgetClass is set but does not derive from UDetectionMeterWidget — meter will not update."),
+                    *GetName());
+            }
+        }
+        else
+        {
+            // No widget class assigned in BP — hide the component entirely so
+            // we don't render an empty 2D plate.
+            UE_LOG(LogTemp, Warning,
+                TEXT("[EnemyEncounter] %s: DetectionMeterWidgetClass is NULL — assign WBP_DetectionMeter in BP defaults."),
+                *GetName());
+            DetectionMeterComponent->SetVisibility(false);
+        }
+    }
 }
 
 void AEnemyEncounter::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
+
+    // Billboard the detection meter toward the player camera so the bar is
+    // always legible regardless of where the camera is. World-space widgets
+    // need this manually; Screen-space did it automatically but had other
+    // rendering issues.
+    if (DetectionMeterComponent && DetectionMeterComponent->IsVisible())
+    {
+        if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
+        {
+            FVector CamLoc;
+            FRotator CamRot;
+            PC->GetPlayerViewPoint(CamLoc, CamRot);
+            const FVector ToCam = CamLoc - DetectionMeterComponent->GetComponentLocation();
+            const FRotator FaceRot = ToCam.Rotation() + FRotator(0.f, 180.f, 0.f);
+            DetectionMeterComponent->SetWorldRotation(FaceRot);
+        }
+    }
 
     if (!bIsStunned) { return; }
 

@@ -73,6 +73,11 @@ public:
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Input")
     TObjectPtr<UInputAction> ConeShotAction;
 
+    /** C to toggle crouch — reduces enemy detection radius/distance by
+     *  CrouchDetectionMultiplier while held / toggled. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Input")
+    TObjectPtr<UInputAction> CrouchAction;
+
     // -------------------------------------------------------------------------
     //  Gun — tunables
     // -------------------------------------------------------------------------
@@ -138,6 +143,19 @@ public:
     FVector AimSocketOffset = FVector(0.f, 50.f, 30.f);
 
     // -------------------------------------------------------------------------
+    //  Stealth — see UEnemyDetectionComponent
+    // -------------------------------------------------------------------------
+
+    /** Multiplier applied to enemy DetectionDistance/DetectionRadius while
+     *  crouched. 0.5 = enemies see you at half their normal range. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Exploration|Stealth",
+              meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float CrouchDetectionMultiplier = 0.5f;
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Exploration|Stealth")
+    bool IsCrouching() const { return bIsCrouching; }
+
+    // -------------------------------------------------------------------------
     //  Exploration HUD
     //  Assign a UUserWidget Blueprint (e.g. WBP_ExplorationHUD) here. The pawn
     //  spawns it on BeginPlay and removes it on EndPlay. The widget reads
@@ -178,6 +196,7 @@ protected:
     void HandleAimEnd();
     void HandleFire();
     void HandleConeShot();
+    void HandleCrouchToggle();
 
     /** Helper: line trace forward from the camera. Returns the encounter hit, if any. */
     class AEnemyEncounter* TraceForEncounter() const;
@@ -191,6 +210,7 @@ protected:
     // Runtime state
     bool  bIsAiming         = false;
     bool  bIsCastingCone    = false;
+    bool  bIsCrouching      = false;
     float CooldownRemaining = 0.f;
 
     FTimerHandle ConeCastLockTimer;

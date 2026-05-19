@@ -210,13 +210,16 @@ void ACombatantBase::ShowDamageNumber(const FDamagePayload& Payload)
 
     // DamageAmount — UE5 BP "float" can be either FFloatProperty (32-bit)
     // or FDoubleProperty (64-bit) depending on settings; try both.
+    // Round to whole numbers so the popup reads "94" instead of "93.8" when
+    // danger / resistance multipliers introduce fractional damage.
+    const float DisplayDamage = FMath::RoundToFloat(Payload.ResolvedDamage);
     if (FFloatProperty* FloatProp = FindFProperty<FFloatProperty>(W->GetClass(), TEXT("DamageAmount")))
     {
-        FloatProp->SetPropertyValue_InContainer(W, Payload.ResolvedDamage);
+        FloatProp->SetPropertyValue_InContainer(W, DisplayDamage);
     }
     else if (FDoubleProperty* DoubleProp = FindFProperty<FDoubleProperty>(W->GetClass(), TEXT("DamageAmount")))
     {
-        DoubleProp->SetPropertyValue_InContainer(W, static_cast<double>(Payload.ResolvedDamage));
+        DoubleProp->SetPropertyValue_InContainer(W, static_cast<double>(DisplayDamage));
     }
     else
     {

@@ -112,6 +112,56 @@ public:
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Encounter|Stun")
     float GetStunRemaining() const { return StunRemaining; }
 
+    // -------------------------------------------------------------------------
+    //  Chase (Phase C)
+    //
+    //  When Detection->OnDetectionFull fires, the encounter enters chase
+    //  state and starts moving toward the player. If the player breaks LOS
+    //  for ChaseGiveUpSeconds, the encounter gives up and walks back to
+    //  HomeLocation. If the player gets within ChaseAcceptanceDistance while
+    //  chasing, the trigger sphere overlap will start combat with enemy
+    //  initiative (caught from behind = bad spawn).
+    //
+    //  Movement is a simple Vector lerp on the actor's transform — no nav
+    //  mesh, no character movement. Real patrol AI is later (Phase C2 / D).
+    // -------------------------------------------------------------------------
+
+    /** Base chase movement speed in cm/s. Scaled at runtime by danger level. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Encounter|Chase",
+              meta = (ClampMin = "0.0"))
+    float ChaseSpeed = 400.f;
+
+    /** How long the encounter chases without LOS before giving up (seconds). */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Encounter|Chase",
+              meta = (ClampMin = "0.0"))
+    float ChaseGiveUpSeconds = 4.f;
+
+    /** Hard distance cap — if player escapes beyond this from the encounter's
+     *  HomeLocation, give up immediately even with LOS. cm. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Encounter|Chase",
+              meta = (ClampMin = "0.0"))
+    float ChaseMaxRange = 4000.f;
+
+    /** Movement speed when returning to home after giving up (cm/s). */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Encounter|Chase",
+              meta = (ClampMin = "0.0"))
+    float ReturnSpeed = 250.f;
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Encounter|Chase")
+    bool IsChasing() const { return bIsChasing; }
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Encounter|Chase")
+    bool IsReturningToHome() const { return bIsReturningToHome; }
+
+    /** Called when this encounter's detection meter fully fills (or a neighbor
+     *  alerts it via the one-hop broadcast). Begins chase state. */
+    UFUNCTION()
+    void HandleDetectionFull(AEnemyEncounter* DetectingEncounter);
+
+    /** Force-stops chase and returns the encounter to its HomeLocation. */
+    UFUNCTION(BlueprintCallable, Category = "Encounter|Chase")
+    void StopChase();
+
     /**
      * Manually trigger combat with explicit initiative (used by the cone shot,
      * which doesn't rely on overlap). Pass true to grant the player first turn.
@@ -138,4 +188,21 @@ protected:
 
     UPROPERTY(BlueprintReadOnly, Category = "Encounter|Stun")
     float StunRemaining = 0.f;
+
+    /** Chase runtime state. Driven by HandleDetectionFull + Tick. */
+    UPROPERTY(BlueprintReadOnly, Category = "Encounter|Chase")
+    bool bIsChasing = false;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Encounter|Chase")
+    bool bIsReturningToHome = false;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Encounter|Chase")
+    float LostSightTimer = 0.f;
+
+    /** Captured in BeginPlay. The spot the encounter goes back to after giving up. */
+    UPROPERTY(BlueprintReadOnly, Category = "Encounter|Chase")
+    FVector HomeLocation = FVector::ZeroVector;
+
+    void TickChase(float DeltaTime);
+    void TickReturnToHome(float DeltaTime);
 };

@@ -3,10 +3,13 @@
 #include "Exploration/ExplorationPawn.h"
 #include "Exploration/EnemyDetectionComponent.h"
 #include "Exploration/DetectionMeterWidget.h"
+#include "Core/DangerManager.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/WidgetComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "Engine/GameInstance.h"
+#include "DrawDebugHelpers.h"
 
 AEnemyEncounter::AEnemyEncounter()
 {
@@ -74,6 +77,15 @@ void AEnemyEncounter::BeginPlay()
 {
     Super::BeginPlay();
 
+    // Snapshot the spawn location — chase falls back to this when giving up.
+    HomeLocation = GetActorLocation();
+
+    // Hook the detection component so we know when to start chasing.
+    if (Detection)
+    {
+        Detection->OnDetectionFull.AddDynamic(this, &AEnemyEncounter::HandleDetectionFull);
+    }
+
     // Apply BP-tuned values to the widget component (constructor uses defaults
     // before BP overrides land).
     if (DetectionMeterComponent)
@@ -137,15 +149,181 @@ void AEnemyEncounter::Tick(float DeltaTime)
         }
     }
 
-    if (!bIsStunned) { return; }
-
-    StunRemaining -= DeltaTime;
-    if (StunRemaining <= 0.f)
+    // Chase / return-to-home overrides patrol/stun — handled before stun decay
+    // because a chasing encounter that gets stunned should still tick the stun
+    // timer but not pursue. Stun cancels chase.
+    if (bIsStunned)
     {
-        bIsStunned    = false;
-        StunRemaining = 0.f;
-        UE_LOG(LogTemp, Log, TEXT("[EnemyEncounter] %s recovered from stun."), *GetName());
+        StunRemaining -= DeltaTime;
+        if (StunRemaining <= 0.f)
+        {
+            bIsStunned    = false;
+            StunRemaining = 0.f;
+            UE_LOG(LogTemp, Log, TEXT("[EnemyEncounter] %s recovered from stun."), *GetName());
+        }
+        return;  // stunned enemies don't chase
     }
+
+    if (bIsChasing)
+    {
+        TickChase(DeltaTime);
+    }
+    else if (bIsReturningToHome)
+    {
+        TickReturnToHome(DeltaTime);
+    }
+}
+
+// -----------------------------------------------------------------------------
+//  Chase
+// -----------------------------------------------------------------------------
+
+void AEnemyEncounter::HandleDetectionFull(AEnemyEncounter* /*DetectingEncounter*/)
+{
+    if (bIsChasing) { return; }  // already chasing — ignore re-trigger
+
+    bIsChasing         = true;
+    bIsReturningToHome = false;
+    LostSightTimer     = 0.f;
+
+    UE_LOG(LogTemp, Warning, TEXT("[EnemyEncounter] %s started CHASING the player."),
+        *GetName());
+
+    // Push global chase flag → DangerManager pauses the decay timer while any
+    // encounter is actively chasing.
+    if (UGameInstance* GI = GetGameInstance())
+    {
+        if (UDangerManager* DM = GI->GetSubsystem<UDangerManager>())
+        {
+            DM->SetChaseActive(true);
+        }
+    }
+}
+
+void AEnemyEncounter::StopChase()
+{
+    if (!bIsChasing) { return; }
+
+    bIsChasing         = false;
+    bIsReturningToHome = true;   // walk back to spawn
+    LostSightTimer     = 0.f;
+
+    // Detection component re-arms its meter — drop to zero so the enemy has
+    // to see the player fresh again before another chase starts.
+    if (Detection)
+    {
+        Detection->DetectionMeter   = 0.f;
+        Detection->bAlertedThisLife = false;
+        Detection->bPlayerVisible   = false;
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("[EnemyEncounter] %s gave up chasing — returning home."),
+        *GetName());
+
+    // Clear global chase flag so DangerManager resumes its decay timer.
+    if (UGameInstance* GI = GetGameInstance())
+    {
+        if (UDangerManager* DM = GI->GetSubsystem<UDangerManager>())
+        {
+            DM->SetChaseActive(false);
+        }
+    }
+}
+
+void AEnemyEncounter::TickChase(float DeltaTime)
+{
+    APawn* PlayerPawn = UGameplayStatics::GetPlayerPawn(this, 0);
+    if (!PlayerPawn) { return; }
+
+    const FVector MyLoc     = GetActorLocation();
+    const FVector PlayerLoc = PlayerPawn->GetActorLocation();
+
+    // Hard distance cap — escaped too far from home → give up.
+    if (FVector::Dist(HomeLocation, PlayerLoc) > ChaseMaxRange)
+    {
+        StopChase();
+        return;
+    }
+
+    // Lost-sight timer — if Detection can't currently see the player, accumulate
+    // toward giving up. Reset on any LOS contact.
+    if (Detection && !Detection->bPlayerVisible)
+    {
+        LostSightTimer += DeltaTime;
+        if (LostSightTimer >= ChaseGiveUpSeconds)
+        {
+            StopChase();
+            return;
+        }
+    }
+    else
+    {
+        LostSightTimer = 0.f;
+    }
+
+    // Move toward the player on the XY plane (preserve our Z so we don't
+    // sink into the ground or fly up at the player's eye height).
+    FVector ToPlayer = PlayerLoc - MyLoc;
+    ToPlayer.Z = 0.f;
+    const float DistXY = ToPlayer.Size();
+    if (DistXY > KINDA_SMALL_NUMBER)
+    {
+        const FVector Dir = ToPlayer / DistXY;
+
+        // Chase speed scales with danger level so high danger = harder to outrun.
+        float SpeedMult = 1.f;
+        if (UGameInstance* GI = GetGameInstance())
+        {
+            if (UDangerManager* DM = GI->GetSubsystem<UDangerManager>())
+            {
+                SpeedMult = DM->GetChaseSpeedMultiplier();
+            }
+        }
+
+        const float Step = ChaseSpeed * SpeedMult * DeltaTime;
+        const FVector NewLoc(MyLoc.X + Dir.X * Step, MyLoc.Y + Dir.Y * Step, MyLoc.Z);
+        SetActorLocation(NewLoc);
+
+        // Face the direction of travel so the static mesh visually points
+        // toward the player. Yaw only — keeps the actor upright.
+        SetActorRotation(Dir.Rotation());
+    }
+
+#if !UE_BUILD_SHIPPING
+    // Red marker above the encounter while chasing — gives an at-a-glance read
+    // separate from the detection meter (which can be hidden during the chase).
+    DrawDebugString(GetWorld(), MyLoc + FVector(0.f, 0.f, 280.f),
+        TEXT("CHASE"), nullptr, FColor::Red, 0.f, true, 1.4f);
+#endif
+}
+
+void AEnemyEncounter::TickReturnToHome(float DeltaTime)
+{
+    const FVector MyLoc  = GetActorLocation();
+    FVector ToHome = HomeLocation - MyLoc;
+    ToHome.Z = 0.f;
+    const float DistXY = ToHome.Size();
+
+    // Arrived (within 50cm)
+    if (DistXY < 50.f)
+    {
+        SetActorLocation(FVector(HomeLocation.X, HomeLocation.Y, MyLoc.Z));
+        bIsReturningToHome = false;
+        UE_LOG(LogTemp, Log, TEXT("[EnemyEncounter] %s returned to patrol home."),
+            *GetName());
+        return;
+    }
+
+    const FVector Dir = ToHome / DistXY;
+    const float Step  = ReturnSpeed * DeltaTime;
+    const FVector NewLoc(MyLoc.X + Dir.X * Step, MyLoc.Y + Dir.Y * Step, MyLoc.Z);
+    SetActorLocation(NewLoc);
+    SetActorRotation(Dir.Rotation());
+
+#if !UE_BUILD_SHIPPING
+    DrawDebugString(GetWorld(), MyLoc + FVector(0.f, 0.f, 280.f),
+        TEXT("RETURNING"), nullptr, FColor::Yellow, 0.f, true, 1.2f);
+#endif
 }
 
 void AEnemyEncounter::Stun(float Duration)
@@ -185,13 +363,20 @@ void AEnemyEncounter::HandleTriggerOverlap(UPrimitiveComponent* /*OverlappedComp
     // Only react to the player's exploration pawn, not arbitrary actors.
     if (!Cast<AExplorationPawn>(OtherActor)) { return; }
 
-    // If the player walked into a stunned encounter, they get the drop —
-    // their fastest party member acts first. Otherwise it's a standard
-    // ambush: the fastest enemy goes first (per the GDD's stealth section).
-    const bool bPlayerInitiative = bIsStunned;
+    // Initiative rules per pitch (Outside Combat → Stealth):
+    //   - Walked into a STUNNED encounter → player initiative (gun setup)
+    //   - Caught while being CHASED       → enemy initiative (alerted ambush)
+    //   - Default contact (no flags)      → enemy initiative (standard ambush)
+    // The only way to get player initiative is the cone-shot path (handled
+    // separately) or stunning the encounter with a gun shot first.
+    const bool bPlayerInitiative = bIsStunned && !bIsChasing;
 
-    UE_LOG(LogTemp, Log, TEXT("[EnemyEncounter] %s triggered by %s (stunned=%s)"),
-        *GetName(), *OtherActor->GetName(), bIsStunned ? TEXT("true") : TEXT("false"));
+    UE_LOG(LogTemp, Log,
+        TEXT("[EnemyEncounter] %s triggered by %s (stunned=%s chasing=%s) → playerInit=%s"),
+        *GetName(), *OtherActor->GetName(),
+        bIsStunned  ? TEXT("true") : TEXT("false"),
+        bIsChasing  ? TEXT("true") : TEXT("false"),
+        bPlayerInitiative ? TEXT("true") : TEXT("false"));
 
     TriggerCombat(bPlayerInitiative);
 }

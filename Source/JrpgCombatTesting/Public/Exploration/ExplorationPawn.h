@@ -78,6 +78,11 @@ public:
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Input")
     TObjectPtr<UInputAction> CrouchAction;
 
+    /** Q to attempt stealth assassination on the nearest encounter in front.
+     *  Has a direct-key fallback (like crouch) so it works without an IA asset. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Input")
+    TObjectPtr<UInputAction> AssassinateAction;
+
     // -------------------------------------------------------------------------
     //  Gun — tunables
     // -------------------------------------------------------------------------
@@ -156,6 +161,34 @@ public:
     bool IsCrouching() const { return bIsCrouching; }
 
     // -------------------------------------------------------------------------
+    //  Assassination — channeled
+    // -------------------------------------------------------------------------
+
+    /** Seconds the player must remain in a valid stealth position for the
+     *  assassination to land. Movement is locked during the channel. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Exploration|Assassination",
+              meta = (ClampMin = "0.1"))
+    float AssassinationChannelTime = 2.5f;
+
+    /** If ANY non-target encounter's detection meter exceeds this fraction
+     *  during the channel, the player is "killed" — channel aborts and that
+     *  encounter triggers combat with enemy initiative. 0.25 = 25%. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Exploration|Assassination",
+              meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float CounterDetectionKillThreshold = 0.25f;
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Exploration|Assassination")
+    bool IsAssassinating() const { return bIsAssassinating; }
+
+    /** 0..1 — how far through the channel the player is. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Exploration|Assassination")
+    float GetAssassinationProgress() const;
+
+    /** The encounter being assassinated. Null when not channeling. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Exploration|Assassination")
+    class AEnemyEncounter* GetAssassinationTarget() const;
+
+    // -------------------------------------------------------------------------
     //  Exploration HUD
     //  Assign a UUserWidget Blueprint (e.g. WBP_ExplorationHUD) here. The pawn
     //  spawns it on BeginPlay and removes it on EndPlay. The widget reads
@@ -197,6 +230,7 @@ protected:
     void HandleFire();
     void HandleConeShot();
     void HandleCrouchToggle();
+    void HandleAssassinate();
 
     /** Helper: line trace forward from the camera. Returns the encounter hit, if any. */
     class AEnemyEncounter* TraceForEncounter() const;
@@ -207,11 +241,29 @@ protected:
     /** Cleared by a timer started in HandleConeShot. */
     void EndConeCastLock();
 
+    /** Begin a 2.5s channel on Target. Locks movement, drives a progress timer
+     *  in Tick, aborts if state changes. Caller has already verified the target
+     *  is in Ready state. */
+    void StartAssassination(class AEnemyEncounter* Target);
+
+    /** Per-frame work — bumps progress, re-checks target state + counter-detection. */
+    void TickAssassination(float DeltaTime);
+
+    /** Restore movement and clear channel flags. Reason is logged for debugging. */
+    void CancelAssassination(const FString& Reason);
+
+    /** Channel reached AssassinationChannelTime — execute the kill / combat. */
+    void CompleteAssassination();
+
     // Runtime state
     bool  bIsAiming         = false;
     bool  bIsCastingCone    = false;
     bool  bIsCrouching      = false;
     float CooldownRemaining = 0.f;
+
+    bool  bIsAssassinating     = false;
+    float AssassinationElapsed = 0.f;
+    TWeakObjectPtr<class AEnemyEncounter> CurrentAssassinationTarget;
 
     FTimerHandle ConeCastLockTimer;
 };

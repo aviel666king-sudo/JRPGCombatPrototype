@@ -115,6 +115,11 @@ void AExplorationPawn::Tick(float DeltaTime)
     {
         CooldownRemaining = FMath::Max(0.f, CooldownRemaining - DeltaTime);
     }
+
+    if (bIsAssassinating)
+    {
+        TickAssassination(DeltaTime);
+    }
 }
 
 float AExplorationPawn::GetGunCooldownPercent() const
@@ -164,6 +169,10 @@ void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
         {
             EIC->BindAction(CrouchAction, ETriggerEvent::Started, this, &AExplorationPawn::HandleCrouchToggle);
         }
+        if (AssassinateAction)
+        {
+            EIC->BindAction(AssassinateAction, ETriggerEvent::Started, this, &AExplorationPawn::HandleAssassinate);
+        }
     }
 
     // Direct-key fallback for crouch — binds the C key on the raw input
@@ -178,6 +187,14 @@ void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
     {
         PlayerInputComponent->BindKey(EKeys::C, IE_Pressed, this, &AExplorationPawn::HandleCrouchToggle);
         UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Crouch bound to C key via direct fallback (no IA_Crouch assigned)"));
+    }
+
+    // Same pattern for assassination — Q key fallback if IA_Assassinate isn't
+    // wired into IMC_Exploration / BP_ExploartionPawn.
+    if (PlayerInputComponent && !AssassinateAction)
+    {
+        PlayerInputComponent->BindKey(EKeys::Q, IE_Pressed, this, &AExplorationPawn::HandleAssassinate);
+        UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Assassinate bound to Q key via direct fallback (no IA_Assassinate assigned)"));
     }
 }
 
@@ -319,6 +336,164 @@ void AExplorationPawn::HandleConeShot()
     }
 }
 
+// -----------------------------------------------------------------------------
+//  Assassination — channeled (2.5s)
+//
+//  Press Q while in a valid stealth position → starts a timed channel during
+//  which the player is frozen. Aborts on:
+//    - target state change (turns, moves out of range, alerted, chasing)
+//    - any OTHER encounter's detection rising above CounterDetectionKillThreshold
+//      (the "caught" branch — that detector then attacks with enemy initiative)
+//  Completes after AssassinationChannelTime → instant-kill if overleveled,
+//  otherwise combat with player initiative.
+//
+//  Visual feedback is owned entirely by the in-world UI (Q icon + progress bar
+//  on the encounter, ground ring for the range). UE_LOG goes to Output Log for
+//  debugging; no on-screen text.
+// -----------------------------------------------------------------------------
+
+void AExplorationPawn::HandleAssassinate()
+{
+    // Pressing Q while already channeling is a no-op — players who mash the key
+    // shouldn't accidentally reset the timer.
+    if (bIsAssassinating) { return; }
+
+    // Find the closest Ready target. UI already tells the player whether they
+    // can assassinate (green Q icon), so we don't need to explain failures.
+    AEnemyEncounter* ReadyBest    = nullptr;
+    float            ReadyBestDsq = TNumericLimits<float>::Max();
+    const FVector    MyLoc        = GetActorLocation();
+
+    for (TActorIterator<AEnemyEncounter> It(GetWorld()); It; ++It)
+    {
+        AEnemyEncounter* Enc = *It;
+        if (!Enc) { continue; }
+        if (Enc->GetAssassinationStatus(this) != EAssassinationStatus::Ready) { continue; }
+
+        const float DSq = FVector::DistSquared(MyLoc, Enc->GetActorLocation());
+        if (DSq < ReadyBestDsq) { ReadyBestDsq = DSq; ReadyBest = Enc; }
+    }
+
+    if (ReadyBest)
+    {
+        StartAssassination(ReadyBest);
+    }
+}
+
+float AExplorationPawn::GetAssassinationProgress() const
+{
+    if (!bIsAssassinating || AssassinationChannelTime <= 0.f) { return 0.f; }
+    return FMath::Clamp(AssassinationElapsed / AssassinationChannelTime, 0.f, 1.f);
+}
+
+AEnemyEncounter* AExplorationPawn::GetAssassinationTarget() const
+{
+    return CurrentAssassinationTarget.Get();
+}
+
+void AExplorationPawn::StartAssassination(AEnemyEncounter* Target)
+{
+    if (!Target) { return; }
+
+    bIsAssassinating           = true;
+    AssassinationElapsed       = 0.f;
+    CurrentAssassinationTarget = Target;
+
+    // Lock movement — character is committed to the strike.
+    if (UCharacterMovementComponent* Move = GetCharacterMovement())
+    {
+        Move->StopMovementImmediately();
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("[ExplorationPawn] Assassination channel STARTED on %s (%.1fs)"),
+           *Target->GetName(), AssassinationChannelTime);
+}
+
+void AExplorationPawn::TickAssassination(float DeltaTime)
+{
+    AEnemyEncounter* Target = CurrentAssassinationTarget.Get();
+    if (!Target)
+    {
+        CancelAssassination(TEXT("Target lost."));
+        return;
+    }
+
+    // 1. Target itself must remain in Ready state — turning away, alert, chase
+    //    all break the channel. UI (Q icon turning grey + ring colour change)
+    //    already communicates what happened, so we just log + abort.
+    const EAssassinationStatus St = Target->GetAssassinationStatus(this);
+    if (St != EAssassinationStatus::Ready)
+    {
+        CancelAssassination(TEXT("Target state changed."));
+        return;
+    }
+
+    // 2. Counter-detection — any OTHER encounter spotting you past the threshold
+    //    is fatal. That detector then attacks with full initiative.
+    for (TActorIterator<AEnemyEncounter> It(GetWorld()); It; ++It)
+    {
+        AEnemyEncounter* Other = *It;
+        if (!Other || Other == Target || !Other->Detection) { continue; }
+        if (Other->Detection->DetectionMeter > CounterDetectionKillThreshold)
+        {
+            UE_LOG(LogTemp, Warning,
+                TEXT("[ExplorationPawn] CAUGHT mid-assassination by %s (detect %.0f%%)"),
+                *Other->GetName(), Other->Detection->DetectionMeter * 100.f);
+
+            // Reset our flags BEFORE triggering combat — otherwise the new battle
+            // start will land while we're still "channeling".
+            bIsAssassinating = false;
+            CurrentAssassinationTarget = nullptr;
+            AssassinationElapsed = 0.f;
+
+            Other->TriggerCombat(/*bPlayerHasInitiative=*/false);
+            return;
+        }
+    }
+
+    // 3. Tick the channel timer.
+    AssassinationElapsed += DeltaTime;
+    if (AssassinationElapsed >= AssassinationChannelTime)
+    {
+        CompleteAssassination();
+    }
+}
+
+void AExplorationPawn::CompleteAssassination()
+{
+    AEnemyEncounter* Target = CurrentAssassinationTarget.Get();
+    bIsAssassinating           = false;
+    AssassinationElapsed       = 0.f;
+    CurrentAssassinationTarget = nullptr;
+
+    if (!Target) { return; }
+
+    if (Target->IsOverleveledForAssassination())
+    {
+        UE_LOG(LogTemp, Log, TEXT("[ExplorationPawn] Assassinated %s — instant kill."),
+               *Target->GetName());
+        Target->Assassinate(this);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Log,
+               TEXT("[ExplorationPawn] Stealth strike on %s — combat (player initiative)."),
+               *Target->GetName());
+        Target->TriggerCombat(/*bPlayerHasInitiative=*/true);
+    }
+}
+
+void AExplorationPawn::CancelAssassination(const FString& Reason)
+{
+    if (!bIsAssassinating) { return; }
+
+    bIsAssassinating           = false;
+    AssassinationElapsed       = 0.f;
+    CurrentAssassinationTarget = nullptr;
+
+    UE_LOG(LogTemp, Log, TEXT("[ExplorationPawn] Assassination cancelled — %s"), *Reason);
+}
+
 void AExplorationPawn::HandleCrouchToggle()
 {
     bIsCrouching = !bIsCrouching;
@@ -449,8 +624,9 @@ void AExplorationPawn::GatherEncountersInCone(TArray<AEnemyEncounter*>& Out) con
 
 void AExplorationPawn::HandleMove(const FInputActionValue& Value)
 {
-    // Cone-shot cast locks the character in place.
-    if (bIsCastingCone) { return; }
+    // Cone-shot cast and assassination channel both lock the character in place.
+    if (bIsCastingCone)    { return; }
+    if (bIsAssassinating)  { return; }
 
     const FVector2D Axis = Value.Get<FVector2D>();
     if (!Controller || Axis.IsNearlyZero()) { return; }

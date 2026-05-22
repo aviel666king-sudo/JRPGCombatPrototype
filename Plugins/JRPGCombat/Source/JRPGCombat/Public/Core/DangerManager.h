@@ -45,6 +45,31 @@ public:
     float DecaySeconds = 20.f;
 
     // -------------------------------------------------------------------------
+    //  Player level (placeholder until a real XP/level system lands)
+    //  Used by AEnemyEncounter::CanBeAssassinated to decide if a stealth
+    //  approach should one-shot the encounter (player overleveled) or just
+    //  grant turn priority in combat.
+    // -------------------------------------------------------------------------
+
+    /** Effective level of the active player party. TODO: replace with real
+     *  per-character XP system. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Danger|Level")
+    int32 PlayerEffectiveLevel = 1;
+
+    /** Player must equal-or-exceed encounter level by AT LEAST this much for a
+     *  stealth approach to instant-kill instead of just starting combat with
+     *  priority. 0 = same level kills, 1 = need one above, etc. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Danger|Level",
+              meta = (ClampMin = "0"))
+    int32 AssassinationLevelGap = 0;
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Danger|Level")
+    int32 GetPlayerEffectiveLevel() const { return PlayerEffectiveLevel; }
+
+    UFUNCTION(BlueprintCallable, Category = "Danger|Level")
+    void SetPlayerEffectiveLevel(int32 NewLevel) { PlayerEffectiveLevel = FMath::Max(1, NewLevel); }
+
+    // -------------------------------------------------------------------------
     //  State queries
     // -------------------------------------------------------------------------
 

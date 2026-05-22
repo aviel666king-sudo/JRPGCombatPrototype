@@ -172,7 +172,167 @@ void AEnemyEncounter::Tick(float DeltaTime)
     {
         TickReturnToHome(DeltaTime);
     }
+    else if (HasPatrolRoute())
+    {
+        TickPatrol(DeltaTime);
+    }
+
+#if !UE_BUILD_SHIPPING
+    // Assassination range/behind viz — only shown when player is close, so
+    // distant encounters don't clutter the screen. Drawn every tick (1-frame
+    // lifetime) so it color-changes live as the player moves.
+    DrawAssassinationViz();
+#endif
 }
+
+#if !UE_BUILD_SHIPPING
+void AEnemyEncounter::DrawAssassinationViz()
+{
+    if (AssassinationVizDistanceMult <= 0.f || AssassinationRange <= 0.f) { return; }
+
+    APawn* Player = UGameplayStatics::GetPlayerPawn(this, 0);
+    if (!Player) { return; }
+
+    const FVector MyLoc     = GetActorLocation();
+    const FVector PlayerLoc = Player->GetActorLocation();
+    const float DistToPlayer = FVector::Dist(MyLoc, PlayerLoc);
+
+    // Cull when player is too far away to care about this encounter.
+    if (DistToPlayer > AssassinationRange * AssassinationVizDistanceMult) { return; }
+
+    const EAssassinationStatus Status = GetAssassinationStatus(Player);
+
+    // Pick colour from current status. Bright green = press Q now.
+    FColor RingColor;
+    switch (Status)
+    {
+    case EAssassinationStatus::Ready:      RingColor = FColor(50, 255, 80);  break; // green
+    case EAssassinationStatus::NotBehind:  RingColor = FColor(255, 220, 40); break; // yellow
+    case EAssassinationStatus::OutOfRange: RingColor = FColor(255, 140, 30); break; // orange
+    case EAssassinationStatus::Alerted:    RingColor = FColor(255, 40, 40);  break; // red
+    case EAssassinationStatus::Chasing:    return;                                 // chase has its own viz
+    default:                               RingColor = FColor(180,180,180);  break;
+    }
+
+    // Ground ring at AssassinationRange, drawn slightly below the encounter's
+    // origin so it lies near the floor. The last two FVector args are the
+    // X/Y axes of the circle's plane — feeding world X/Y keeps it flat.
+    const FVector RingCenter(MyLoc.X, MyLoc.Y, MyLoc.Z - 40.f);
+    DrawDebugCircle(GetWorld(), RingCenter, AssassinationRange, 48, RingColor,
+                    /*bPersistent=*/false, /*LifeTime=*/-1.f, /*DepthPriority=*/0,
+                    /*Thickness=*/3.f, FVector(1,0,0), FVector(0,1,0),
+                    /*bDrawAxis=*/false);
+
+    // Behind-hemisphere arc — draw a filled-ish wedge by stepping line segments
+    // from -HalfAngle to +HalfAngle on the BACK of the actor (yaw + 180).
+    const float HalfRad     = FMath::DegreesToRadians(AssassinationBehindHalfAngleDeg);
+    const float YawRad      = FMath::DegreesToRadians(GetActorRotation().Yaw + 180.f);
+    const int32 Segments    = 24;
+    FVector PrevPoint = RingCenter
+        + FVector(FMath::Cos(YawRad - HalfRad), FMath::Sin(YawRad - HalfRad), 0.f) * AssassinationRange;
+    for (int32 i = 1; i <= Segments; ++i)
+    {
+        const float T     = static_cast<float>(i) / static_cast<float>(Segments);
+        const float Angle = YawRad - HalfRad + (2.f * HalfRad) * T;
+        const FVector P   = RingCenter
+            + FVector(FMath::Cos(Angle), FMath::Sin(Angle), 0.f) * AssassinationRange;
+
+        // Line from center to perimeter every other step — gives the wedge a
+        // "filled" look without the cost of a real triangle fill.
+        if (i % 2 == 0)
+        {
+            DrawDebugLine(GetWorld(), RingCenter, P, RingColor, false, -1.f, 0, 1.5f);
+        }
+        // Arc edge.
+        DrawDebugLine(GetWorld(), PrevPoint, P, RingColor, false, -1.f, 0, 2.5f);
+        PrevPoint = P;
+    }
+
+    // ----- Q-prompt + channel bar -------------------------------------------
+    //  - Q icon: bright green when Ready, dim grey when not.
+    //  - Progress bar: appears below the icon while the player is channeling
+    //    THIS encounter, fills left → right.
+    //  Both use FULL camera-facing rotation (yaw + pitch) so the plates always
+    //  show face-on to the camera — no visible "3D box" from steep angles.
+    //  Vertical placement is relative to the actor's bounding-box top, so the
+    //  UI sits just above the encounter regardless of mesh size.
+
+    // Top-of-mesh Z in world space. Falls back to actor origin if no bounds.
+    float TopZ = MyLoc.Z + 100.f;
+    {
+        FVector ActorOrigin, ActorBoxExtent;
+        GetActorBounds(/*bOnlyCollidingComponents=*/false, ActorOrigin, ActorBoxExtent);
+        if (!ActorBoxExtent.IsNearlyZero())
+        {
+            TopZ = ActorOrigin.Z + ActorBoxExtent.Z;
+        }
+    }
+
+    const FVector IconCenter(MyLoc.X, MyLoc.Y, TopZ + 55.f);
+    const FVector BarCenter (MyLoc.X, MyLoc.Y, TopZ + 22.f);
+
+    // Camera-facing rotation — bar's local X axis points AT the camera so the
+    // Y-Z face is always perpendicular to view = reads as a flat 2D rectangle.
+    FQuat BillboardQuat = FQuat::Identity;
+    if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
+    {
+        FVector CamLoc;
+        FRotator CamRot;
+        PC->GetPlayerViewPoint(CamLoc, CamRot);
+        const FVector ToCam = CamLoc - IconCenter;
+        if (!ToCam.IsNearlyZero())
+        {
+            BillboardQuat = ToCam.Rotation().Quaternion();
+        }
+    }
+
+    const bool bIsReady = (Status == EAssassinationStatus::Ready);
+
+    const FColor IconFillColor = bIsReady ? FColor(60, 240, 90) : FColor( 90,  90,  90);
+    const FColor IconEdgeColor = bIsReady ? FColor(220,255,220) : FColor(160, 160, 160);
+
+    // Local axes (after billboard rotation):
+    //   X = depth   (tiny — invisible to camera)
+    //   Y = width
+    //   Z = height
+    const FVector IconOutlineExtent(0.5f, 16.f, 16.f);
+    const FVector IconFillExtent   (1.0f, 14.f, 14.f);  // slightly thicker so it pokes through outline
+
+    DrawDebugBox     (GetWorld(), IconCenter, IconOutlineExtent, BillboardQuat,
+                      IconEdgeColor, false, -1.f, 0, 1.5f);
+    DrawDebugSolidBox(GetWorld(), IconCenter, IconFillExtent,    BillboardQuat,
+                      IconFillColor, false, -1.f, 0);
+
+    // "Q" letter, DrawDebugString billboards automatically.
+    DrawDebugString(GetWorld(), IconCenter, TEXT("Q"),
+                    nullptr, FColor::White, 0.f, true, 1.4f);
+
+    // Progress bar — only while the player is channeling THIS encounter.
+    if (const AExplorationPawn* PlayerPawn = Cast<AExplorationPawn>(Player))
+    {
+        if (PlayerPawn->IsAssassinating() && PlayerPawn->GetAssassinationTarget() == this)
+        {
+            const float Pct = PlayerPawn->GetAssassinationProgress();
+
+            const float   BarMaxHalfLen = 22.f;
+            const float   BarHalfLen    = BarMaxHalfLen * Pct;
+            const FVector BarFullExtent (0.5f, BarMaxHalfLen, 4.f);
+            const FVector BarFillExtent (1.0f, BarHalfLen,    4.f);
+
+            // Left-anchored fill — shift filled plate so its LEFT edge sits at
+            // the outline's left edge regardless of fill amount.
+            const FVector LocalLeftOffset(0.f, -(BarMaxHalfLen - BarHalfLen), 0.f);
+            const FVector WorldLeftOffset = BillboardQuat.RotateVector(LocalLeftOffset);
+            const FVector FilledCenter    = BarCenter + WorldLeftOffset;
+
+            DrawDebugBox     (GetWorld(), BarCenter,    BarFullExtent, BillboardQuat,
+                              FColor::White, false, -1.f, 0, 1.f);
+            DrawDebugSolidBox(GetWorld(), FilledCenter, BarFillExtent, BillboardQuat,
+                              FColor(60, 240, 90), false, -1.f, 0);
+        }
+    }
+}
+#endif
 
 // -----------------------------------------------------------------------------
 //  Chase
@@ -299,22 +459,51 @@ void AEnemyEncounter::TickChase(float DeltaTime)
 
 void AEnemyEncounter::TickReturnToHome(float DeltaTime)
 {
-    const FVector MyLoc  = GetActorLocation();
-    FVector ToHome = HomeLocation - MyLoc;
-    ToHome.Z = 0.f;
-    const float DistXY = ToHome.Size();
+    const FVector MyLoc = GetActorLocation();
+
+    // Pick target: if we have a patrol route, head back to the nearest waypoint
+    // and resume patrolling from there. Otherwise just go back to HomeLocation.
+    FVector ReturnTarget = HomeLocation;
+    int32   SnapToIndex  = -1;
+
+    if (HasPatrolRoute())
+    {
+        float BestDistSq = TNumericLimits<float>::Max();
+        for (int32 i = 0; i < PatrolOffsets.Num(); ++i)
+        {
+            const FVector WP = GetPatrolTargetWorld(i);
+            const float DSq = FVector::DistSquared(MyLoc, WP);
+            if (DSq < BestDistSq) { BestDistSq = DSq; SnapToIndex = i; ReturnTarget = WP; }
+        }
+    }
+
+    FVector ToTarget = ReturnTarget - MyLoc;
+    ToTarget.Z = 0.f;
+    const float DistXY = ToTarget.Size();
 
     // Arrived (within 50cm)
     if (DistXY < 50.f)
     {
-        SetActorLocation(FVector(HomeLocation.X, HomeLocation.Y, MyLoc.Z));
+        SetActorLocation(FVector(ReturnTarget.X, ReturnTarget.Y, MyLoc.Z));
         bIsReturningToHome = false;
-        UE_LOG(LogTemp, Log, TEXT("[EnemyEncounter] %s returned to patrol home."),
-            *GetName());
+
+        if (SnapToIndex >= 0)
+        {
+            // Resume patrol from the waypoint we just landed on
+            CurrentPatrolIndex = SnapToIndex;
+            PatrolWaitTimer    = PatrolWaitSecondsAtWaypoint;
+            UE_LOG(LogTemp, Log, TEXT("[EnemyEncounter] %s resumed patrol at waypoint %d."),
+                *GetName(), SnapToIndex);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Log, TEXT("[EnemyEncounter] %s returned to patrol home."),
+                *GetName());
+        }
         return;
     }
 
-    const FVector Dir = ToHome / DistXY;
+    const FVector Dir = ToTarget / DistXY;
     const float Step  = ReturnSpeed * DeltaTime;
     const FVector NewLoc(MyLoc.X + Dir.X * Step, MyLoc.Y + Dir.Y * Step, MyLoc.Z);
     SetActorLocation(NewLoc);
@@ -324,6 +513,129 @@ void AEnemyEncounter::TickReturnToHome(float DeltaTime)
     DrawDebugString(GetWorld(), MyLoc + FVector(0.f, 0.f, 280.f),
         TEXT("RETURNING"), nullptr, FColor::Yellow, 0.f, true, 1.2f);
 #endif
+}
+
+// -----------------------------------------------------------------------------
+//  Patrol
+// -----------------------------------------------------------------------------
+
+FVector AEnemyEncounter::GetPatrolTargetWorld(int32 Index) const
+{
+    if (!PatrolOffsets.IsValidIndex(Index)) { return HomeLocation; }
+    return HomeLocation + PatrolOffsets[Index];
+}
+
+void AEnemyEncounter::TickPatrol(float DeltaTime)
+{
+    if (!HasPatrolRoute()) { return; }
+
+    // Pause at waypoint
+    if (PatrolWaitTimer > 0.f)
+    {
+        PatrolWaitTimer -= DeltaTime;
+#if !UE_BUILD_SHIPPING
+        DrawDebugString(GetWorld(), GetActorLocation() + FVector(0.f, 0.f, 260.f),
+            TEXT("WAITING"), nullptr, FColor(80, 200, 255), 0.f, true, 1.1f);
+#endif
+        return;
+    }
+
+    const FVector MyLoc  = GetActorLocation();
+    const FVector Target = GetPatrolTargetWorld(CurrentPatrolIndex);
+    FVector ToTarget = Target - MyLoc;
+    ToTarget.Z = 0.f;
+    const float DistXY = ToTarget.Size();
+
+    if (DistXY < 50.f)
+    {
+        // Arrived at waypoint — pause, then advance index
+        SetActorLocation(FVector(Target.X, Target.Y, MyLoc.Z));
+        PatrolWaitTimer    = PatrolWaitSecondsAtWaypoint;
+        CurrentPatrolIndex = (CurrentPatrolIndex + 1) % PatrolOffsets.Num();
+        return;
+    }
+
+    const FVector Dir = ToTarget / DistXY;
+    const float Step  = PatrolSpeed * DeltaTime;
+    SetActorLocation(FVector(MyLoc.X + Dir.X * Step, MyLoc.Y + Dir.Y * Step, MyLoc.Z));
+    SetActorRotation(Dir.Rotation());
+
+#if !UE_BUILD_SHIPPING
+    DrawDebugString(GetWorld(), MyLoc + FVector(0.f, 0.f, 260.f),
+        FString::Printf(TEXT("PATROL → WP %d"), CurrentPatrolIndex),
+        nullptr, FColor(80, 200, 255), 0.f, true, 1.1f);
+    // Draw a faint line route between waypoints so designers can see the path
+    for (int32 i = 0; i < PatrolOffsets.Num(); ++i)
+    {
+        const FVector A = GetPatrolTargetWorld(i);
+        const FVector B = GetPatrolTargetWorld((i + 1) % PatrolOffsets.Num());
+        DrawDebugLine(GetWorld(), A + FVector(0.f, 0.f, 10.f), B + FVector(0.f, 0.f, 10.f),
+                      FColor(40, 120, 200), false, -1.f, 0, 1.f);
+        DrawDebugSphere(GetWorld(), A, 30.f, 12, FColor(40, 120, 200), false, -1.f, 0, 1.f);
+    }
+#endif
+}
+
+// -----------------------------------------------------------------------------
+//  Assassination
+// -----------------------------------------------------------------------------
+
+EAssassinationStatus AEnemyEncounter::GetAssassinationStatus(APawn* Player) const
+{
+    if (!Player)        { return EAssassinationStatus::NoPlayer; }
+    if (bIsChasing)     { return EAssassinationStatus::Chasing;  }
+
+    // Any active suspicion disqualifies stealth — meter past 5% counts.
+    if (Detection && (Detection->bPlayerVisible || Detection->DetectionMeter > 0.05f))
+    {
+        return EAssassinationStatus::Alerted;
+    }
+
+    const FVector MyLoc     = GetActorLocation();
+    const FVector PlayerLoc = Player->GetActorLocation();
+    if (FVector::Dist(MyLoc, PlayerLoc) > AssassinationRange)
+    {
+        return EAssassinationStatus::OutOfRange;
+    }
+
+    // Behind check — player must be in the rear hemisphere of the encounter.
+    FVector ToPlayer = PlayerLoc - MyLoc;
+    ToPlayer.Z = 0.f;
+    if (ToPlayer.IsNearlyZero()) { return EAssassinationStatus::NotBehind; }
+    ToPlayer.Normalize();
+
+    const float Dot          = FVector::DotProduct(GetActorForwardVector(), ToPlayer);
+    const float CosThreshold = -FMath::Cos(FMath::DegreesToRadians(AssassinationBehindHalfAngleDeg));
+    return (Dot <= CosThreshold) ? EAssassinationStatus::Ready : EAssassinationStatus::NotBehind;
+}
+
+bool AEnemyEncounter::CanBeAssassinated(APawn* Player) const
+{
+    return GetAssassinationStatus(Player) == EAssassinationStatus::Ready;
+}
+
+bool AEnemyEncounter::IsOverleveledForAssassination() const
+{
+    if (UGameInstance* GI = GetGameInstance())
+    {
+        if (UDangerManager* DM = GI->GetSubsystem<UDangerManager>())
+        {
+            return DM->GetPlayerEffectiveLevel() >= EncounterLevel + DM->AssassinationLevelGap;
+        }
+    }
+    return false;
+}
+
+void AEnemyEncounter::Assassinate(APawn* /*Attacker*/)
+{
+    UE_LOG(LogTemp, Warning,
+        TEXT("[EnemyEncounter] %s ASSASSINATED — instant kill, no combat. (EncounterLvl=%d)"),
+        *GetName(), EncounterLevel);
+
+    // TODO: award reduced XP to attacker only — needs XP system first.
+    // For now we just destroy the encounter, matching the pitch's "resolves
+    // the encounter immediately without entering combat".
+    Destroy();
 }
 
 void AEnemyEncounter::Stun(float Duration)

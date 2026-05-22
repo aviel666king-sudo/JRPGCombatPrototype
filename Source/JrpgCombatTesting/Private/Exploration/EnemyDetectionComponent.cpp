@@ -124,17 +124,29 @@ void UEnemyDetectionComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
     // -------------------------------------------------------------------------
     if (DetectionMeter > 0.01f && GetOwner())
     {
-        const FVector OwnerLoc  = GetOwner()->GetActorLocation();
-        const FVector BarCenter = OwnerLoc + FVector(0.f, 0.f, 220.f);
+        // Place the bar just above the actor's bounding-box top instead of a
+        // fixed +220cm offset, so the UI sits flush with mesh size variations.
+        const FVector OwnerLoc = GetOwner()->GetActorLocation();
+        float TopZ = OwnerLoc.Z + 100.f;
+        {
+            FVector ActorOrigin, ActorBoxExtent;
+            GetOwner()->GetActorBounds(/*bOnlyCollidingComponents=*/false,
+                                       ActorOrigin, ActorBoxExtent);
+            if (!ActorBoxExtent.IsNearlyZero())
+            {
+                TopZ = ActorOrigin.Z + ActorBoxExtent.Z;
+            }
+        }
+        const FVector BarCenter(OwnerLoc.X, OwnerLoc.Y, TopZ + 22.f);
 
         // Bar dimensions in LOCAL space (before billboard rotation):
-        //   X = depth (thin, facing camera)
-        //   Y = length (this is the axis that fills)
-        //   Z = height (thin, bar thickness)
+        //   X = depth   (very thin — invisible to camera once full-facing)
+        //   Y = length  (axis that fills)
+        //   Z = height
         const float BarMaxHalfLen = 60.f;
         const float BarHalfLen    = BarMaxHalfLen * DetectionMeter;
-        const FVector FullExtent  (3.f, BarMaxHalfLen, 8.f);
-        const FVector FillExtent  (3.5f, BarHalfLen,   8.f);  // slightly thicker so it pokes through
+        const FVector FullExtent  (0.5f, BarMaxHalfLen, 8.f);
+        const FVector FillExtent  (1.0f, BarHalfLen,    8.f);  // pokes through outline
 
         // Color: green → yellow → red
         FColor BarColor;
@@ -149,17 +161,17 @@ void UEnemyDetectionComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
             BarColor = FColor(255, uint8(220 * (1.f - T)), 0);
         }
 
-        // Billboard rotation — yaw only so the bar stays horizontal. Its local
-        // X-axis points toward the player camera, so the Y-axis (bar length)
-        // sits perpendicular to view = always readable.
+        // Full camera-facing rotation (yaw + pitch). Bar's local X axis points
+        // AT the camera so the Y-Z face is always perpendicular to view —
+        // reads as a flat 2D rectangle from any camera angle, including TPS
+        // looking down at the enemies.
         FQuat BarQuat = FQuat::Identity;
         if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
         {
             FVector CamLoc;
             FRotator CamRot;
             PC->GetPlayerViewPoint(CamLoc, CamRot);
-            FVector ToCam = CamLoc - BarCenter;
-            ToCam.Z = 0.f;
+            const FVector ToCam = CamLoc - BarCenter;
             if (!ToCam.IsNearlyZero())
             {
                 BarQuat = ToCam.Rotation().Quaternion();

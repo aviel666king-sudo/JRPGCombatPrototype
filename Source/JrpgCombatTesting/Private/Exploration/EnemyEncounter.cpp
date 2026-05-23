@@ -2,11 +2,9 @@
 #include "Exploration/JrpgGameMode.h"
 #include "Exploration/ExplorationPawn.h"
 #include "Exploration/EnemyDetectionComponent.h"
-#include "Exploration/DetectionMeterWidget.h"
 #include "Core/DangerManager.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
-#include "Components/WidgetComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "Engine/GameInstance.h"
 #include "DrawDebugHelpers.h"
@@ -48,29 +46,6 @@ AEnemyEncounter::AEnemyEncounter()
     // -------------------------------------------------------------------------
 
     Detection = CreateDefaultSubobject<UEnemyDetectionComponent>(TEXT("Detection"));
-
-    // -------------------------------------------------------------------------
-    //  Detection meter UI (Phase B2) — world-space widget floating overhead,
-    //  billboarded toward the camera. Class is assigned in BP defaults
-    //  (DetectionMeterWidgetClass = WBP_DetectionMeter).
-    // -------------------------------------------------------------------------
-
-    DetectionMeterComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("DetectionMeter"));
-    DetectionMeterComponent->SetupAttachment(RootComponent);
-    DetectionMeterComponent->SetRelativeLocation(FVector(0.f, 0.f, DetectionMeterHeight));
-
-    // World space is far more reliable than Screen — Screen mode has quirky
-    // viewport/scale rendering issues that can leave the widget invisible.
-    // World space renders as a 3D plane that we ticker-rotate to face the camera.
-    DetectionMeterComponent->SetWidgetSpace(EWidgetSpace::World);
-    DetectionMeterComponent->SetDrawSize(DetectionMeterDrawSize);
-
-    // Scale down the 3D plane so 200px of widget ≈ 100cm wide in world space.
-    DetectionMeterComponent->SetRelativeScale3D(FVector(0.5f));
-    DetectionMeterComponent->SetTwoSided(true);  // visible from either side
-    DetectionMeterComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-    DetectionMeterComponent->SetGenerateOverlapEvents(false);
-    DetectionMeterComponent->SetVisibility(true);
 }
 
 void AEnemyEncounter::BeginPlay()
@@ -85,67 +60,20 @@ void AEnemyEncounter::BeginPlay()
     {
         Detection->OnDetectionFull.AddDynamic(this, &AEnemyEncounter::HandleDetectionFull);
     }
-
-    // Apply BP-tuned values to the widget component (constructor uses defaults
-    // before BP overrides land).
-    if (DetectionMeterComponent)
-    {
-        DetectionMeterComponent->SetRelativeLocation(FVector(0.f, 0.f, DetectionMeterHeight));
-        DetectionMeterComponent->SetDrawSize(DetectionMeterDrawSize);
-
-        // Assign the WBP class and bind the widget to our detection component.
-        if (DetectionMeterWidgetClass)
-        {
-            DetectionMeterComponent->SetWidgetClass(DetectionMeterWidgetClass);
-
-            // Force the user widget to spawn now so we can bind it. Without this,
-            // GetUserWidgetObject() returns nullptr until the first tick.
-            DetectionMeterComponent->InitWidget();
-
-            if (UDetectionMeterWidget* Meter =
-                    Cast<UDetectionMeterWidget>(DetectionMeterComponent->GetUserWidgetObject()))
-            {
-                Meter->BindToDetection(Detection);
-                UE_LOG(LogTemp, Warning, TEXT("[EnemyEncounter] %s: meter widget spawned and bound."),
-                    *GetName());
-            }
-            else
-            {
-                UE_LOG(LogTemp, Warning,
-                    TEXT("[EnemyEncounter] %s: DetectionMeterWidgetClass is set but does not derive from UDetectionMeterWidget — meter will not update."),
-                    *GetName());
-            }
-        }
-        else
-        {
-            // No widget class assigned in BP — hide the component entirely so
-            // we don't render an empty 2D plate.
-            UE_LOG(LogTemp, Warning,
-                TEXT("[EnemyEncounter] %s: DetectionMeterWidgetClass is NULL — assign WBP_DetectionMeter in BP defaults."),
-                *GetName());
-            DetectionMeterComponent->SetVisibility(false);
-        }
-    }
 }
 
 void AEnemyEncounter::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
 
-    // Billboard the detection meter toward the player camera so the bar is
-    // always legible regardless of where the camera is. World-space widgets
-    // need this manually; Screen-space did it automatically but had other
-    // rendering issues.
-    if (DetectionMeterComponent && DetectionMeterComponent->IsVisible())
+    // Cache the player's current world position any time we can see them.
+    // The investigate state uses this as its "go-look-here" target.
+    if (Detection && Detection->bPlayerVisible)
     {
-        if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
+        if (APawn* Player = UGameplayStatics::GetPlayerPawn(this, 0))
         {
-            FVector CamLoc;
-            FRotator CamRot;
-            PC->GetPlayerViewPoint(CamLoc, CamRot);
-            const FVector ToCam = CamLoc - DetectionMeterComponent->GetComponentLocation();
-            const FRotator FaceRot = ToCam.Rotation() + FRotator(0.f, 180.f, 0.f);
-            DetectionMeterComponent->SetWorldRotation(FaceRot);
+            LastSeenPlayerLocation = Player->GetActorLocation();
+            bHasLastSeen = true;
         }
     }
 
@@ -172,9 +100,30 @@ void AEnemyEncounter::Tick(float DeltaTime)
     {
         TickReturnToHome(DeltaTime);
     }
-    else if (HasPatrolRoute())
+    else
     {
-        TickPatrol(DeltaTime);
+        // Investigate trigger — partial detection (above threshold, below full)
+        // bumps the encounter into "go check it out" mode without committing to
+        // a chase. Full meter still fires OnDetectionFull and enters chase.
+        if (!bIsInvestigating && bHasLastSeen && Detection
+            && Detection->DetectionMeter > InvestigateDetectionThreshold
+            && Detection->DetectionMeter < 1.f)
+        {
+            StartInvestigation();
+        }
+
+        if (bIsInvestigating)
+        {
+            TickInvestigate(DeltaTime);
+        }
+        else if (HasPatrolRoute())
+        {
+            TickPatrol(DeltaTime);
+        }
+        else
+        {
+            TickWander(DeltaTime);
+        }
     }
 
 #if !UE_BUILD_SHIPPING
@@ -342,9 +291,15 @@ void AEnemyEncounter::HandleDetectionFull(AEnemyEncounter* /*DetectingEncounter*
 {
     if (bIsChasing) { return; }  // already chasing — ignore re-trigger
 
-    bIsChasing         = true;
-    bIsReturningToHome = false;
-    LostSightTimer     = 0.f;
+    bIsChasing           = true;
+    bIsReturningToHome   = false;
+    LostSightTimer       = 0.f;
+
+    // Chase supersedes investigate — clear those flags so we don't try to
+    // resume looking-around when the chase ends.
+    bIsInvestigating     = false;
+    InvestigateStage     = 0;
+    InvestigateLookTimer = 0.f;
 
     UE_LOG(LogTemp, Warning, TEXT("[EnemyEncounter] %s started CHASING the player."),
         *GetName());
@@ -577,6 +532,154 @@ void AEnemyEncounter::TickPatrol(float DeltaTime)
 }
 
 // -----------------------------------------------------------------------------
+//  Wander — automatic random patrol around HomeLocation
+// -----------------------------------------------------------------------------
+
+void AEnemyEncounter::PickRandomWanderTarget()
+{
+    if (WanderRadius <= 0.f)
+    {
+        WanderTarget     = HomeLocation;
+        bHasWanderTarget = true;
+        return;
+    }
+
+    // Random point inside a disc around HomeLocation. Stay flat — we keep Z
+    // pinned to the encounter's current Z anyway when moving.
+    const float Angle  = FMath::FRandRange(0.f, 2.f * PI);
+    const float Radius = FMath::FRandRange(WanderRadius * 0.25f, WanderRadius);
+    WanderTarget = HomeLocation + FVector(FMath::Cos(Angle) * Radius,
+                                          FMath::Sin(Angle) * Radius, 0.f);
+    bHasWanderTarget = true;
+}
+
+void AEnemyEncounter::TickWander(float DeltaTime)
+{
+    // Pause between wander legs — sit still so the player has a stationary
+    // window to assassinate.
+    if (WanderPauseTimer > 0.f)
+    {
+        WanderPauseTimer -= DeltaTime;
+#if !UE_BUILD_SHIPPING
+        DrawDebugString(GetWorld(), GetActorLocation() + FVector(0.f, 0.f, 260.f),
+            TEXT("IDLE"), nullptr, FColor(120, 160, 200), 0.f, true, 1.0f);
+#endif
+        return;
+    }
+
+    if (!bHasWanderTarget) { PickRandomWanderTarget(); }
+
+    const FVector MyLoc = GetActorLocation();
+    FVector ToTarget    = WanderTarget - MyLoc;
+    ToTarget.Z = 0.f;
+    const float DistXY = ToTarget.Size();
+
+    if (DistXY < 50.f)
+    {
+        // Arrived — pause for a random interval before picking a new target.
+        SetActorLocation(FVector(WanderTarget.X, WanderTarget.Y, MyLoc.Z));
+        WanderPauseTimer = FMath::FRandRange(FMath::Max(WanderPauseMin, 0.f),
+                                             FMath::Max(WanderPauseMax, WanderPauseMin));
+        bHasWanderTarget = false;
+        return;
+    }
+
+    const FVector Dir = ToTarget / DistXY;
+    const float Step  = PatrolSpeed * DeltaTime;
+    SetActorLocation(FVector(MyLoc.X + Dir.X * Step, MyLoc.Y + Dir.Y * Step, MyLoc.Z));
+    SetActorRotation(Dir.Rotation());
+
+#if !UE_BUILD_SHIPPING
+    DrawDebugString(GetWorld(), MyLoc + FVector(0.f, 0.f, 260.f),
+        TEXT("WANDER"), nullptr, FColor(120, 160, 200), 0.f, true, 1.0f);
+    DrawDebugSphere(GetWorld(), WanderTarget, 20.f, 8,
+                    FColor(80, 200, 255), false, -1.f, 0, 1.f);
+#endif
+}
+
+// -----------------------------------------------------------------------------
+//  Investigate — partial-detection "go check it out" state
+// -----------------------------------------------------------------------------
+
+void AEnemyEncounter::StartInvestigation()
+{
+    bIsInvestigating     = true;
+    InvestigateStage     = 0;          // walking toward last-seen
+    InvestigateLookTimer = 0.f;
+
+    // Reset any current wander/patrol pause so the encounter starts moving
+    // immediately rather than waiting out a stale timer.
+    WanderPauseTimer = 0.f;
+    PatrolWaitTimer  = 0.f;
+
+    UE_LOG(LogTemp, Log, TEXT("[EnemyEncounter] %s INVESTIGATING (detect %.0f%%)"),
+        *GetName(), Detection ? Detection->DetectionMeter * 100.f : 0.f);
+}
+
+void AEnemyEncounter::TickInvestigate(float DeltaTime)
+{
+    const FVector MyLoc = GetActorLocation();
+
+    if (InvestigateStage == 0)  // walking to last-seen
+    {
+        FVector ToTarget = LastSeenPlayerLocation - MyLoc;
+        ToTarget.Z = 0.f;
+        const float DistXY = ToTarget.Size();
+
+        if (DistXY < 80.f)
+        {
+            // Arrived — switch to look-around stage.
+            InvestigateStage     = 1;
+            InvestigateLookTimer = 0.f;
+        }
+        else
+        {
+            const FVector Dir = ToTarget / DistXY;
+            const float Step  = ChaseSpeed * InvestigateSpeedScale * DeltaTime;
+            SetActorLocation(FVector(MyLoc.X + Dir.X * Step,
+                                     MyLoc.Y + Dir.Y * Step, MyLoc.Z));
+            SetActorRotation(Dir.Rotation());
+        }
+    }
+    else  // stage 1 — looking around at the suspected spot
+    {
+        InvestigateLookTimer += DeltaTime;
+
+        // Sweep the yaw back and forth so the detection cone covers ground —
+        // a +/- 60° sinusoid around the original arrival yaw.
+        const float SweepHz   = 1.0f / FMath::Max(InvestigateLookDuration, 0.5f);
+        const float Phase     = InvestigateLookTimer * SweepHz * 2.f * PI;
+        const float YawOffset = FMath::Sin(Phase) * 60.f;
+        FRotator Rot = GetActorRotation();
+        Rot.Yaw += YawOffset * DeltaTime * 4.f;  // light incremental sweep
+        SetActorRotation(Rot);
+
+        if (InvestigateLookTimer >= InvestigateLookDuration)
+        {
+            // Done — drop investigation flag. Patrol/Wander resumes next tick.
+            bIsInvestigating     = false;
+            InvestigateStage     = 0;
+            InvestigateLookTimer = 0.f;
+
+            // If detection has dropped, also clear last-seen so we don't keep
+            // re-entering investigate on the same stale spot.
+            if (Detection && Detection->DetectionMeter < InvestigateDetectionThreshold)
+            {
+                bHasLastSeen = false;
+            }
+        }
+    }
+
+#if !UE_BUILD_SHIPPING
+    DrawDebugString(GetWorld(), MyLoc + FVector(0.f, 0.f, 260.f),
+        InvestigateStage == 0 ? TEXT("INVESTIGATING") : TEXT("LOOKING..."),
+        nullptr, FColor(255, 180, 60), 0.f, true, 1.1f);
+    DrawDebugSphere(GetWorld(), LastSeenPlayerLocation, 30.f, 12,
+                    FColor(255, 180, 60), false, -1.f, 0, 1.5f);
+#endif
+}
+
+// -----------------------------------------------------------------------------
 //  Assassination
 // -----------------------------------------------------------------------------
 
@@ -663,6 +766,90 @@ void AEnemyEncounter::TriggerCombat(bool bPlayerHasInitiative)
         *GetName(), bPlayerHasInitiative ? TEXT("true") : TEXT("false"));
 
     GM->BeginEncounter(this, bPlayerHasInitiative);
+}
+
+// -----------------------------------------------------------------------------
+//  Combat-time freeze + visibility
+// -----------------------------------------------------------------------------
+
+void AEnemyEncounter::SetExplorationActive(bool bActive)
+{
+    // Stop running AI, hide visuals, kill collisions so the player can't trigger
+    // a new fight by walking through where this encounter happens to be.
+    SetActorTickEnabled(bActive);
+
+    // SetActorHiddenInGame hides ALL primitive components (mesh + any future
+    // visible children) and also short-circuits debug-draw calls — broader
+    // than Mesh->SetVisibility, which only touches the static mesh.
+    SetActorHiddenInGame(!bActive);
+
+    if (TriggerSphere)
+    {
+        TriggerSphere->SetGenerateOverlapEvents(bActive);
+        TriggerSphere->SetCollisionEnabled(bActive
+            ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+    }
+    if (Detection)
+    {
+        // Pause detection ticking entirely — no sense filling a meter we can't see.
+        Detection->SetComponentTickEnabled(bActive);
+    }
+
+    // If this encounter was mid-chase/mid-investigate when combat started,
+    // clear those flags too — so when ResetToSpawn runs on battle end, the
+    // encounter is fully clean (otherwise a leftover bIsChasing could push
+    // SetChaseActive(true) on the danger manager via a stale tick).
+    if (!bActive)
+    {
+        bIsChasing           = false;
+        bIsReturningToHome   = false;
+        bIsInvestigating     = false;
+        bHasWanderTarget     = false;
+    }
+}
+
+void AEnemyEncounter::ResetToSpawn()
+{
+    // Teleport back to spawn and clear EVERY transient AI flag — chase, return,
+    // patrol, wander, investigate, alert. The encounter should look like it
+    // just spawned for the first time.
+    SetActorLocation(HomeLocation);
+
+    bIsChasing           = false;
+    bIsReturningToHome   = false;
+    LostSightTimer       = 0.f;
+
+    bIsInvestigating     = false;
+    InvestigateStage     = 0;
+    InvestigateLookTimer = 0.f;
+    bHasLastSeen         = false;
+
+    bHasWanderTarget     = false;
+    WanderPauseTimer     = 0.f;
+    CurrentPatrolIndex   = 0;
+    PatrolWaitTimer      = 0.f;
+
+    bIsStunned           = false;
+    StunRemaining        = 0.f;
+
+    if (Detection)
+    {
+        Detection->DetectionMeter   = 0.f;
+        Detection->bAlertedThisLife = false;
+        Detection->bPlayerVisible   = false;
+    }
+
+    // Clear any global chase flag this encounter might have set on the danger
+    // manager — defensive, since chase should already be over by now.
+    if (UGameInstance* GI = GetGameInstance())
+    {
+        if (UDangerManager* DM = GI->GetSubsystem<UDangerManager>())
+        {
+            DM->SetChaseActive(false);
+        }
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("[EnemyEncounter] %s reset to spawn."), *GetName());
 }
 
 void AEnemyEncounter::HandleTriggerOverlap(UPrimitiveComponent* /*OverlappedComponent*/,

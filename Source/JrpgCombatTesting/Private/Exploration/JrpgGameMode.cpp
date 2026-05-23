@@ -157,6 +157,18 @@ void AJrpgGameMode::BeginEncounter(AEnemyEncounter* Encounter, bool bPlayerHasIn
     ActiveEncounter = Encounter;
     WorldMode       = EWorldMode::InCombat;
 
+    // Freeze EVERY encounter in the world — including the active one. The
+    // fight itself runs on spawned combatants at the arena, not on the
+    // encounter actor, so the encounter has no business being visible (its
+    // chase label was leaking into the arena view, and its mesh too).
+    for (TActorIterator<AEnemyEncounter> It(GetWorld()); It; ++It)
+    {
+        if (AEnemyEncounter* Enc = *It)
+        {
+            Enc->SetExplorationActive(false);
+        }
+    }
+
     // Create the combat HUD widget. The old auto-start flow used to do this in
     // the Level Blueprint; now we own it here so the encounter system stays
     // self-contained — every fight gets a HUD without level-bp wiring.
@@ -248,6 +260,19 @@ void AJrpgGameMode::HandleBattleEnded(bool bVictory)
             if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
             {
                 PC->SetViewTargetWithBlend(CachedExplorationPawn, 0.25f, VTBlend_Cubic);
+            }
+        }
+
+        // Reset every surviving encounter back to spawn AND re-enable them —
+        // any enemy that was mid-wander when the fight started is teleported
+        // home so the player isn't immediately re-overlapped on exit.
+        for (TActorIterator<AEnemyEncounter> It(GetWorld()); It; ++It)
+        {
+            AEnemyEncounter* Enc = *It;
+            if (Enc)
+            {
+                Enc->ResetToSpawn();
+                Enc->SetExplorationActive(true);
             }
         }
 

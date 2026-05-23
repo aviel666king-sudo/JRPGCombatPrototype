@@ -6,12 +6,10 @@
 
 class USphereComponent;
 class UStaticMeshComponent;
-class UWidgetComponent;
 class ACombatantBase;
 class ABattleArena;
 class AExplorationPawn;
 class UEnemyDetectionComponent;
-class UDetectionMeterWidget;
 
 /**
  * Why the player's Q-press did or didn't land on this encounter. Used by
@@ -69,26 +67,6 @@ public:
      *  are editable in the BP defaults under Detection|Vision. */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Encounter")
     TObjectPtr<UEnemyDetectionComponent> Detection;
-
-    /** Floating detection-meter UI (Phase B2). Hosts UDetectionMeterWidget /
-     *  WBP_DetectionMeter in world-space, billboarded toward the camera.
-     *  Set DetectionMeterWidgetClass below to the WBP asset in BP defaults. */
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Encounter")
-    TObjectPtr<UWidgetComponent> DetectionMeterComponent;
-
-    /** UMG asset that derives from UDetectionMeterWidget. Assign WBP_DetectionMeter
-     *  in BP_EnemyEncounter defaults — if left null, no meter is shown. */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Encounter|UI")
-    TSubclassOf<UDetectionMeterWidget> DetectionMeterWidgetClass;
-
-    /** How far above the encounter root the meter floats (cm). */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Encounter|UI",
-              meta = (ClampMin = "0.0"))
-    float DetectionMeterHeight = 220.f;
-
-    /** Draw size of the world-space meter widget in pixels. */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Encounter|UI")
-    FVector2D DetectionMeterDrawSize = FVector2D(200.f, 32.f);
 
     // -------------------------------------------------------------------------
     //  Configuration — set per-encounter in the level Details panel
@@ -189,17 +167,18 @@ public:
     void StopChase();
 
     // -------------------------------------------------------------------------
-    //  Patrol
+    //  Patrol — explicit waypoints
     //
-    //  When idle (not chasing, not returning), the encounter walks between
-    //  PatrolOffsets in order, pausing PatrolWaitSecondsAtWaypoint at each.
-    //  Offsets are world-space deltas relative to HomeLocation, so moving the
-    //  encounter in the level moves its whole patrol route with it.
+    //  When PatrolOffsets is populated, the encounter walks between them in
+    //  order, pausing PatrolWaitSecondsAtWaypoint at each. Offsets are world-
+    //  space deltas relative to HomeLocation, so moving the encounter in the
+    //  level moves its whole patrol route with it.
     //
-    //  Empty PatrolOffsets = stand still at HomeLocation (legacy behavior).
+    //  Empty PatrolOffsets → falls through to the random Wander mode below
+    //  (no setup needed for ambient patrolling).
     // -------------------------------------------------------------------------
 
-    /** Waypoint offsets from HomeLocation. Empty = no patrol, stand at home. */
+    /** Waypoint offsets from HomeLocation. Empty = auto-wander mode. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Encounter|Patrol",
               meta = (MakeEditWidget = "true"))
     TArray<FVector> PatrolOffsets;
@@ -214,6 +193,58 @@ public:
 
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Encounter|Patrol")
     bool HasPatrolRoute() const { return PatrolOffsets.Num() > 0; }
+
+    // -------------------------------------------------------------------------
+    //  Wander — automatic random patrol around spawn
+    //
+    //  Used when PatrolOffsets is empty. The encounter picks a random point
+    //  within WanderRadius of HomeLocation, walks there at PatrolSpeed, pauses
+    //  for a random interval in [WanderPauseMin, WanderPauseMax], picks a new
+    //  point. Gives every placed enemy "life" without per-instance setup.
+    // -------------------------------------------------------------------------
+
+    /** Max distance from HomeLocation the encounter will wander to (cm). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Encounter|Wander",
+              meta = (ClampMin = "0.0"))
+    float WanderRadius = 400.f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Encounter|Wander",
+              meta = (ClampMin = "0.0"))
+    float WanderPauseMin = 2.f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Encounter|Wander",
+              meta = (ClampMin = "0.0"))
+    float WanderPauseMax = 4.f;
+
+    // -------------------------------------------------------------------------
+    //  Investigate — partial-detection wander toward the suspected spot
+    //
+    //  When detection meter exceeds InvestigateDetectionThreshold (but stays
+    //  below 1.0 — full meter = chase, not investigate), the encounter walks
+    //  to the last-seen player location at InvestigateSpeedScale × ChaseSpeed,
+    //  stands and looks around for InvestigateLookDuration, then returns to
+    //  whatever patrol/wander it was doing.
+    // -------------------------------------------------------------------------
+
+    /** Detection meter fraction above which the encounter starts investigating
+     *  (0.15 = 15%). Must be < 1.0 (full = chase). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Encounter|Investigate",
+              meta = (ClampMin = "0.0", ClampMax = "0.99"))
+    float InvestigateDetectionThreshold = 0.15f;
+
+    /** Walk speed during the "go to last-seen" leg, as a fraction of ChaseSpeed.
+     *  0.5 = half speed — distinct from a chase, faster than patrol. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Encounter|Investigate",
+              meta = (ClampMin = "0.0"))
+    float InvestigateSpeedScale = 0.5f;
+
+    /** Seconds spent looking around at the suspected location before giving up. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Encounter|Investigate",
+              meta = (ClampMin = "0.0"))
+    float InvestigateLookDuration = 2.5f;
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Encounter|Investigate")
+    bool IsInvestigating() const { return bIsInvestigating; }
 
     // -------------------------------------------------------------------------
     //  Assassination (Phase E)
@@ -268,6 +299,27 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Encounter")
     void TriggerCombat(bool bPlayerHasInitiative);
 
+    // -------------------------------------------------------------------------
+    //  Combat-time freeze + visibility
+    //
+    //  While the player is fighting one encounter, the others stop ticking,
+    //  hide their mesh, and turn off their trigger sphere — so wandering
+    //  enemies don't render in the background of the arena and can't trigger
+    //  a new encounter the instant combat ends.
+    // -------------------------------------------------------------------------
+
+    /** Toggle exploration behaviour. False = invisible + non-colliding + no tick
+     *  (used during combat). True = restore normal state. */
+    UFUNCTION(BlueprintCallable, Category = "Encounter")
+    void SetExplorationActive(bool bActive);
+
+    /** Teleport back to HomeLocation and clear ALL transient state (wander,
+     *  patrol, investigate, detection meter, chase). Called by the GameMode
+     *  after a battle ends so the player isn't immediately re-overlapped by
+     *  whichever encounter happened to be wandering nearby. */
+    UFUNCTION(BlueprintCallable, Category = "Encounter")
+    void ResetToSpawn();
+
 protected:
 
     virtual void BeginPlay() override;
@@ -309,12 +361,49 @@ protected:
     UPROPERTY(BlueprintReadOnly, Category = "Encounter|Patrol")
     float PatrolWaitTimer = 0.f;
 
+    /** Wander runtime state — current random destination + how long to pause once we reach it. */
+    UPROPERTY(BlueprintReadOnly, Category = "Encounter|Wander")
+    FVector WanderTarget = FVector::ZeroVector;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Encounter|Wander")
+    bool bHasWanderTarget = false;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Encounter|Wander")
+    float WanderPauseTimer = 0.f;
+
+    /** Investigate runtime state. */
+    UPROPERTY(BlueprintReadOnly, Category = "Encounter|Investigate")
+    bool bIsInvestigating = false;
+
+    /** 0 = walking to the suspected spot; 1 = arrived, looking around. */
+    UPROPERTY(BlueprintReadOnly, Category = "Encounter|Investigate")
+    int32 InvestigateStage = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Encounter|Investigate")
+    float InvestigateLookTimer = 0.f;
+
+    /** Updated each tick the player is visible. Used as the target when the
+     *  detection meter rises past InvestigateDetectionThreshold. */
+    UPROPERTY(BlueprintReadOnly, Category = "Encounter|Investigate")
+    FVector LastSeenPlayerLocation = FVector::ZeroVector;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Encounter|Investigate")
+    bool bHasLastSeen = false;
+
     void TickChase(float DeltaTime);
     void TickReturnToHome(float DeltaTime);
     void TickPatrol(float DeltaTime);
+    void TickWander(float DeltaTime);
+    void TickInvestigate(float DeltaTime);
 
     /** Resolve a patrol offset to a world-space target. */
     FVector GetPatrolTargetWorld(int32 Index) const;
+
+    /** Pick a fresh random destination inside WanderRadius around HomeLocation. */
+    void PickRandomWanderTarget();
+
+    /** Begin an investigation toward LastSeenPlayerLocation. */
+    void StartInvestigation();
 
 #if !UE_BUILD_SHIPPING
     /** Draws the ground ring + behind arc + status label every Tick when the

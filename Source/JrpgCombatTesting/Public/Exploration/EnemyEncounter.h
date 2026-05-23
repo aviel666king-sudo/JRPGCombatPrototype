@@ -399,11 +399,60 @@ protected:
     /** Resolve a patrol offset to a world-space target. */
     FVector GetPatrolTargetWorld(int32 Index) const;
 
-    /** Pick a fresh random destination inside WanderRadius around HomeLocation. */
+    /** Pick a fresh random destination inside WanderRadius around HomeLocation.
+     *  Prefers a navigation-system-validated reachable point; falls back to a
+     *  raw random disc point if no nav mesh is set up. */
     void PickRandomWanderTarget();
 
     /** Begin an investigation toward LastSeenPlayerLocation. */
     void StartInvestigation();
+
+    // -------------------------------------------------------------------------
+    //  Navigation path-following
+    //
+    //  Every "move toward target" call routes through MoveActorTowardTarget.
+    //  Internally it asks the nav system for a path, walks corners, and falls
+    //  back to direct-translate if no nav mesh is available — so the AI works
+    //  whether or not the level has a NavMeshBoundsVolume placed.
+    // -------------------------------------------------------------------------
+
+    /** How often (seconds) a chasing/investigating actor recomputes its path
+     *  even when the target hasn't moved. Higher = cheaper but less responsive. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Encounter|Nav",
+              meta = (ClampMin = "0.05"))
+    float NavPathRefreshInterval = 0.4f;
+
+    /** Distance threshold (cm) — if the moving target drifts more than this
+     *  from the cached destination, force a path recompute immediately. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Encounter|Nav",
+              meta = (ClampMin = "1.0"))
+    float NavPathTargetDriftThreshold = 80.f;
+
+    /** Move toward Target at Speed cm/s along a nav path. Falls back to direct
+     *  translate if no path can be found. Returns true when the actor is within
+     *  ArriveDistance of Target on the XY plane. */
+    bool MoveActorTowardTarget(const FVector& Target, float Speed, float DeltaTime,
+                               float ArriveDistance = 50.f);
+
+    /** Cached path state. Reset by ResetToSpawn / state transitions. */
+    UPROPERTY(BlueprintReadOnly, Category = "Encounter|Nav")
+    TArray<FVector> CurrentPathPoints;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Encounter|Nav")
+    int32 CurrentPathIndex = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Encounter|Nav")
+    FVector CachedPathTarget = FVector::ZeroVector;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Encounter|Nav")
+    float NavPathRefreshTimer = 0.f;
+
+    /** Recompute the path if the target has drifted or the refresh timer
+     *  expired. Returns false if no path exists at all (caller falls back). */
+    bool RefreshNavPath(const FVector& Target, float DeltaTime);
+
+    /** Clear cached path so the next MoveActorTowardTarget call recomputes. */
+    void InvalidateNavPath();
 
 #if !UE_BUILD_SHIPPING
     /** Draws the ground ring + behind arc + status label every Tick when the

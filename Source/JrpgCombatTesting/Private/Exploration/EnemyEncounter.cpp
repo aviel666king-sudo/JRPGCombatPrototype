@@ -8,6 +8,8 @@
 #include "Kismet/GameplayStatics.h"
 #include "Engine/GameInstance.h"
 #include "DrawDebugHelpers.h"
+#include "NavigationSystem.h"
+#include "NavigationPath.h"
 
 AEnemyEncounter::AEnemyEncounter()
 {
@@ -77,9 +79,31 @@ void AEnemyEncounter::Tick(float DeltaTime)
         }
     }
 
-    // Chase / return-to-home overrides patrol/stun — handled before stun decay
-    // because a chasing encounter that gets stunned should still tick the stun
-    // timer but not pursue. Stun cancels chase.
+#if !UE_BUILD_SHIPPING
+    // Assassination viz draws EVERY tick regardless of AI state — otherwise
+    // stunned enemies wouldn't show the Q-prompt (Tick used to early-return on
+    // stun, hiding the icon mid-channel). Cheap on its own + culled by range
+    // inside DrawAssassinationViz.
+    DrawAssassinationViz();
+#endif
+
+    // If the player is currently channeling an assassination on US, freeze
+    // every AI branch — no movement, no rotation, no stun countdown — so the
+    // channel can't be aborted by a "Target turned around" caused by our own
+    // wander/patrol logic ticking under it (or by stun expiring and us
+    // resuming wander mid-strike).
+    if (APawn* Player = UGameplayStatics::GetPlayerPawn(this, 0))
+    {
+        if (const AExplorationPawn* PlayerPawn = Cast<AExplorationPawn>(Player))
+        {
+            if (PlayerPawn->IsAssassinating() && PlayerPawn->GetAssassinationTarget() == this)
+            {
+                return;
+            }
+        }
+    }
+
+    // Stun freezes the AI — the timer still counts down but movement stops.
     if (bIsStunned)
     {
         StunRemaining -= DeltaTime;
@@ -89,7 +113,7 @@ void AEnemyEncounter::Tick(float DeltaTime)
             StunRemaining = 0.f;
             UE_LOG(LogTemp, Log, TEXT("[EnemyEncounter] %s recovered from stun."), *GetName());
         }
-        return;  // stunned enemies don't chase
+        return;
     }
 
     if (bIsChasing)
@@ -125,13 +149,6 @@ void AEnemyEncounter::Tick(float DeltaTime)
             TickWander(DeltaTime);
         }
     }
-
-#if !UE_BUILD_SHIPPING
-    // Assassination range/behind viz — only shown when player is close, so
-    // distant encounters don't clutter the screen. Drawn every tick (1-frame
-    // lifetime) so it color-changes live as the player moves.
-    DrawAssassinationViz();
-#endif
 }
 
 #if !UE_BUILD_SHIPPING
@@ -376,33 +393,18 @@ void AEnemyEncounter::TickChase(float DeltaTime)
         LostSightTimer = 0.f;
     }
 
-    // Move toward the player on the XY plane (preserve our Z so we don't
-    // sink into the ground or fly up at the player's eye height).
-    FVector ToPlayer = PlayerLoc - MyLoc;
-    ToPlayer.Z = 0.f;
-    const float DistXY = ToPlayer.Size();
-    if (DistXY > KINDA_SMALL_NUMBER)
+    // Chase speed scales with danger level so high danger = harder to outrun.
+    float SpeedMult = 1.f;
+    if (UGameInstance* GI = GetGameInstance())
     {
-        const FVector Dir = ToPlayer / DistXY;
-
-        // Chase speed scales with danger level so high danger = harder to outrun.
-        float SpeedMult = 1.f;
-        if (UGameInstance* GI = GetGameInstance())
+        if (UDangerManager* DM = GI->GetSubsystem<UDangerManager>())
         {
-            if (UDangerManager* DM = GI->GetSubsystem<UDangerManager>())
-            {
-                SpeedMult = DM->GetChaseSpeedMultiplier();
-            }
+            SpeedMult = DM->GetChaseSpeedMultiplier();
         }
-
-        const float Step = ChaseSpeed * SpeedMult * DeltaTime;
-        const FVector NewLoc(MyLoc.X + Dir.X * Step, MyLoc.Y + Dir.Y * Step, MyLoc.Z);
-        SetActorLocation(NewLoc);
-
-        // Face the direction of travel so the static mesh visually points
-        // toward the player. Yaw only — keeps the actor upright.
-        SetActorRotation(Dir.Rotation());
     }
+
+    // Path-following — falls back to direct translate if no nav mesh.
+    MoveActorTowardTarget(PlayerLoc, ChaseSpeed * SpeedMult, DeltaTime);
 
 #if !UE_BUILD_SHIPPING
     // Red marker above the encounter while chasing — gives an at-a-glance read
@@ -432,19 +434,14 @@ void AEnemyEncounter::TickReturnToHome(float DeltaTime)
         }
     }
 
-    FVector ToTarget = ReturnTarget - MyLoc;
-    ToTarget.Z = 0.f;
-    const float DistXY = ToTarget.Size();
-
-    // Arrived (within 50cm)
-    if (DistXY < 50.f)
+    // Path-following toward the home/waypoint target.
+    if (MoveActorTowardTarget(ReturnTarget, ReturnSpeed, DeltaTime))
     {
-        SetActorLocation(FVector(ReturnTarget.X, ReturnTarget.Y, MyLoc.Z));
         bIsReturningToHome = false;
+        InvalidateNavPath();
 
         if (SnapToIndex >= 0)
         {
-            // Resume patrol from the waypoint we just landed on
             CurrentPatrolIndex = SnapToIndex;
             PatrolWaitTimer    = PatrolWaitSecondsAtWaypoint;
             UE_LOG(LogTemp, Log, TEXT("[EnemyEncounter] %s resumed patrol at waypoint %d."),
@@ -457,12 +454,6 @@ void AEnemyEncounter::TickReturnToHome(float DeltaTime)
         }
         return;
     }
-
-    const FVector Dir = ToTarget / DistXY;
-    const float Step  = ReturnSpeed * DeltaTime;
-    const FVector NewLoc(MyLoc.X + Dir.X * Step, MyLoc.Y + Dir.Y * Step, MyLoc.Z);
-    SetActorLocation(NewLoc);
-    SetActorRotation(Dir.Rotation());
 
 #if !UE_BUILD_SHIPPING
     DrawDebugString(GetWorld(), MyLoc + FVector(0.f, 0.f, 280.f),
@@ -497,23 +488,15 @@ void AEnemyEncounter::TickPatrol(float DeltaTime)
 
     const FVector MyLoc  = GetActorLocation();
     const FVector Target = GetPatrolTargetWorld(CurrentPatrolIndex);
-    FVector ToTarget = Target - MyLoc;
-    ToTarget.Z = 0.f;
-    const float DistXY = ToTarget.Size();
 
-    if (DistXY < 50.f)
+    if (MoveActorTowardTarget(Target, PatrolSpeed, DeltaTime))
     {
-        // Arrived at waypoint — pause, then advance index
-        SetActorLocation(FVector(Target.X, Target.Y, MyLoc.Z));
+        // Arrived at waypoint — pause, advance index, drop the path.
         PatrolWaitTimer    = PatrolWaitSecondsAtWaypoint;
         CurrentPatrolIndex = (CurrentPatrolIndex + 1) % PatrolOffsets.Num();
+        InvalidateNavPath();
         return;
     }
-
-    const FVector Dir = ToTarget / DistXY;
-    const float Step  = PatrolSpeed * DeltaTime;
-    SetActorLocation(FVector(MyLoc.X + Dir.X * Step, MyLoc.Y + Dir.Y * Step, MyLoc.Z));
-    SetActorRotation(Dir.Rotation());
 
 #if !UE_BUILD_SHIPPING
     DrawDebugString(GetWorld(), MyLoc + FVector(0.f, 0.f, 260.f),
@@ -544,8 +527,22 @@ void AEnemyEncounter::PickRandomWanderTarget()
         return;
     }
 
-    // Random point inside a disc around HomeLocation. Stay flat — we keep Z
-    // pinned to the encounter's current Z anyway when moving.
+    // Prefer a navigation-validated reachable point — guarantees the target is
+    // on the nav mesh and actually reachable from HomeLocation.
+    if (UNavigationSystemV1* NavSys = UNavigationSystemV1::GetCurrent(GetWorld()))
+    {
+        FNavLocation Result;
+        if (NavSys->GetRandomReachablePointInRadius(HomeLocation, WanderRadius, Result))
+        {
+            WanderTarget     = Result.Location;
+            bHasWanderTarget = true;
+            return;
+        }
+    }
+
+    // Fallback — random point inside a disc around HomeLocation. May or may
+    // not be reachable, but with no nav mesh the move helper translates
+    // directly anyway.
     const float Angle  = FMath::FRandRange(0.f, 2.f * PI);
     const float Radius = FMath::FRandRange(WanderRadius * 0.25f, WanderRadius);
     WanderTarget = HomeLocation + FVector(FMath::Cos(Angle) * Radius,
@@ -570,24 +567,16 @@ void AEnemyEncounter::TickWander(float DeltaTime)
     if (!bHasWanderTarget) { PickRandomWanderTarget(); }
 
     const FVector MyLoc = GetActorLocation();
-    FVector ToTarget    = WanderTarget - MyLoc;
-    ToTarget.Z = 0.f;
-    const float DistXY = ToTarget.Size();
 
-    if (DistXY < 50.f)
+    if (MoveActorTowardTarget(WanderTarget, PatrolSpeed, DeltaTime))
     {
         // Arrived — pause for a random interval before picking a new target.
-        SetActorLocation(FVector(WanderTarget.X, WanderTarget.Y, MyLoc.Z));
         WanderPauseTimer = FMath::FRandRange(FMath::Max(WanderPauseMin, 0.f),
                                              FMath::Max(WanderPauseMax, WanderPauseMin));
         bHasWanderTarget = false;
+        InvalidateNavPath();
         return;
     }
-
-    const FVector Dir = ToTarget / DistXY;
-    const float Step  = PatrolSpeed * DeltaTime;
-    SetActorLocation(FVector(MyLoc.X + Dir.X * Step, MyLoc.Y + Dir.Y * Step, MyLoc.Z));
-    SetActorRotation(Dir.Rotation());
 
 #if !UE_BUILD_SHIPPING
     DrawDebugString(GetWorld(), MyLoc + FVector(0.f, 0.f, 260.f),
@@ -622,23 +611,15 @@ void AEnemyEncounter::TickInvestigate(float DeltaTime)
 
     if (InvestigateStage == 0)  // walking to last-seen
     {
-        FVector ToTarget = LastSeenPlayerLocation - MyLoc;
-        ToTarget.Z = 0.f;
-        const float DistXY = ToTarget.Size();
-
-        if (DistXY < 80.f)
+        if (MoveActorTowardTarget(LastSeenPlayerLocation,
+                                  ChaseSpeed * InvestigateSpeedScale,
+                                  DeltaTime,
+                                  /*ArriveDistance=*/80.f))
         {
             // Arrived — switch to look-around stage.
             InvestigateStage     = 1;
             InvestigateLookTimer = 0.f;
-        }
-        else
-        {
-            const FVector Dir = ToTarget / DistXY;
-            const float Step  = ChaseSpeed * InvestigateSpeedScale * DeltaTime;
-            SetActorLocation(FVector(MyLoc.X + Dir.X * Step,
-                                     MyLoc.Y + Dir.Y * Step, MyLoc.Z));
-            SetActorRotation(Dir.Rotation());
+            InvalidateNavPath();
         }
     }
     else  // stage 1 — looking around at the suspected spot
@@ -769,6 +750,107 @@ void AEnemyEncounter::TriggerCombat(bool bPlayerHasInitiative)
 }
 
 // -----------------------------------------------------------------------------
+//  Navigation path-following
+// -----------------------------------------------------------------------------
+
+void AEnemyEncounter::InvalidateNavPath()
+{
+    CurrentPathPoints.Reset();
+    CurrentPathIndex      = 0;
+    CachedPathTarget      = FVector::ZeroVector;
+    NavPathRefreshTimer   = 0.f;
+}
+
+bool AEnemyEncounter::RefreshNavPath(const FVector& Target, float DeltaTime)
+{
+    NavPathRefreshTimer -= DeltaTime;
+
+    const bool bTargetDrifted =
+        CurrentPathPoints.Num() == 0
+        || FVector::DistSquared(Target, CachedPathTarget)
+               > NavPathTargetDriftThreshold * NavPathTargetDriftThreshold;
+    const bool bTimedOut = NavPathRefreshTimer <= 0.f;
+
+    if (!bTargetDrifted && !bTimedOut) { return CurrentPathPoints.Num() > 0; }
+
+    UNavigationSystemV1* NavSys = UNavigationSystemV1::GetCurrent(GetWorld());
+    if (!NavSys)
+    {
+        // No nav system at all — let caller fall back to direct movement.
+        return false;
+    }
+
+    UNavigationPath* Path = NavSys->FindPathToLocationSynchronously(
+        this, GetActorLocation(), Target, /*PathfindingContext=*/this);
+
+    if (!Path || !Path->IsValid() || Path->IsPartial() && Path->PathPoints.Num() < 2)
+    {
+        // Couldn't find any usable path — bail. Caller falls back to direct.
+        CurrentPathPoints.Reset();
+        return false;
+    }
+
+    CurrentPathPoints   = Path->PathPoints;
+    CurrentPathIndex    = 1;   // [0] is our current location
+    CachedPathTarget    = Target;
+    NavPathRefreshTimer = NavPathRefreshInterval;
+    return true;
+}
+
+bool AEnemyEncounter::MoveActorTowardTarget(const FVector& Target, float Speed,
+                                            float DeltaTime, float ArriveDistance)
+{
+    const FVector MyLoc = GetActorLocation();
+
+    // Try the nav system first — if it succeeds, walk corner by corner.
+    if (RefreshNavPath(Target, DeltaTime) && CurrentPathPoints.IsValidIndex(CurrentPathIndex))
+    {
+        FVector NextCorner = CurrentPathPoints[CurrentPathIndex];
+        FVector ToCorner   = NextCorner - MyLoc;
+        ToCorner.Z = 0.f;
+        float DistXY = ToCorner.Size();
+
+        // Reached the corner — advance to the next one.
+        if (DistXY < 50.f && CurrentPathIndex < CurrentPathPoints.Num() - 1)
+        {
+            ++CurrentPathIndex;
+            NextCorner = CurrentPathPoints[CurrentPathIndex];
+            ToCorner   = NextCorner - MyLoc;
+            ToCorner.Z = 0.f;
+            DistXY     = ToCorner.Size();
+        }
+
+        if (DistXY > KINDA_SMALL_NUMBER)
+        {
+            const FVector Dir  = ToCorner / DistXY;
+            const float   Step = FMath::Min(Speed * DeltaTime, DistXY);
+            SetActorLocation(FVector(MyLoc.X + Dir.X * Step,
+                                     MyLoc.Y + Dir.Y * Step, MyLoc.Z));
+            SetActorRotation(Dir.Rotation());
+        }
+
+        // Final-arrival check uses the actual Target, not the last corner —
+        // the path endpoint is sometimes slightly inside the nav surface.
+        FVector ToFinal = Target - GetActorLocation();
+        ToFinal.Z = 0.f;
+        return ToFinal.SizeSquared() < ArriveDistance * ArriveDistance;
+    }
+
+    // ---- Fallback: direct translate (no nav mesh) --------------------------
+    FVector ToTarget = Target - MyLoc;
+    ToTarget.Z = 0.f;
+    const float DistXY = ToTarget.Size();
+
+    if (DistXY < ArriveDistance) { return true; }
+
+    const FVector Dir  = ToTarget / DistXY;
+    const float   Step = FMath::Min(Speed * DeltaTime, DistXY);
+    SetActorLocation(FVector(MyLoc.X + Dir.X * Step, MyLoc.Y + Dir.Y * Step, MyLoc.Z));
+    SetActorRotation(Dir.Rotation());
+    return false;
+}
+
+// -----------------------------------------------------------------------------
 //  Combat-time freeze + visibility
 // -----------------------------------------------------------------------------
 
@@ -831,6 +913,8 @@ void AEnemyEncounter::ResetToSpawn()
 
     bIsStunned           = false;
     StunRemaining        = 0.f;
+
+    InvalidateNavPath();
 
     if (Detection)
     {

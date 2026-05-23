@@ -100,7 +100,7 @@ public:
     /** How long an enemy is stunned after a successful gun hit (seconds). */
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Gun",
               meta = (ClampMin = "0.0"))
-    float StunDuration = 2.f;
+    float StunDuration = 0.4f;
 
     /** Cone shot range in cm. 6m default per design spec. */
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Gun",

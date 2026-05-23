@@ -87,6 +87,41 @@ public:
     UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Encounter")
     TObjectPtr<ABattleArena> AssignedArena;
 
+    // -------------------------------------------------------------------------
+    //  Encounter merging (Phase F)
+    //
+    //  When the player is CAUGHT (combat starts with enemy initiative — i.e.
+    //  failed stealth: detection cone filled, chase-overlap, or default trigger
+    //  contact), every encounter within the game-mode's GlobalMergeRadius
+    //  contributes reinforcements to this fight. Successful stealth (player
+    //  initiative) never triggers merging.
+    //
+    //  How the merge is authored:
+    //   - This bool ON THIS encounter = "I can be merged with / can trigger
+    //     merges". Set false on bosses + story fights to opt out.
+    //   - EliteVariantClasses = "what classes I contribute when I'm pulled
+    //     into someone else's fight as reinforcement". Empty = contribute my
+    //     own EnemyClasses (default behaviour: just adds more of the same).
+    //
+    //  This design is SYMMETRIC — it doesn't matter which encounter triggers,
+    //  because each encounter describes its own contribution. Set elite
+    //  classes on the tougher enemy, leave the weaker one default, and either
+    //  trigger order produces the same merged roster.
+    // -------------------------------------------------------------------------
+
+    /** Whether this encounter participates in the merging system at all
+     *  (both as a possible triggerer AND as a possible neighbour to consume).
+     *  False = bosses / story fights that should always be solo. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Encounter|Merging")
+    bool bAllowMerging = true;
+
+    /** Classes I bring to the fight when pulled into someone else's combat as
+     *  a merged neighbour. Empty = use my own EnemyClasses. Set this when
+     *  this encounter is meant to behave as an "elite reinforcement" rather
+     *  than just another copy of itself. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Encounter|Merging")
+    TArray<TSubclassOf<ACombatantBase>> EliteVariantClasses;
+
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Encounter")
     const TArray<TSubclassOf<ACombatantBase>>& GetEnemyClasses() const { return EnemyClasses; }
 

@@ -105,12 +105,88 @@ void AJrpgGameMode::BeginEncounter(AEnemyEncounter* Encounter, bool bPlayerHasIn
         }
     }
 
-    // ── 2. Spawn enemies from the encounter's class list ─────────────────────
+    // ── 2. Build the enemy roster (with merging if the player was caught) ────
+    //
+    //  Start from the triggering encounter's classes. If the player was caught
+    //  (enemy initiative) AND the encounter participates in merging, scan
+    //  every encounter inside GlobalMergeRadius. Each merged neighbour
+    //  contributes from its OWN EliteVariantClasses (falling back to its own
+    //  EnemyClasses if empty) — so the merge result is symmetric regardless
+    //  of which encounter triggered. Hard-capped at MaxMergedEnemies.
+    TArray<TSubclassOf<ACombatantBase>> Roster = Encounter->GetEnemyClasses();
+    MergedEncounters.Reset();
+
+    if (!bPlayerHasInitiative && Encounter->bAllowMerging && GlobalMergeRadius > 0.f)
+    {
+        const FVector OriginLoc  = Encounter->GetActorLocation();
+        const float   MergeRadSq = GlobalMergeRadius * GlobalMergeRadius;
+
+        for (TActorIterator<AEnemyEncounter> It(GetWorld()); It; ++It)
+        {
+            if (Roster.Num() >= MaxMergedEnemies) { break; }
+
+            AEnemyEncounter* Neighbour = *It;
+            if (!Neighbour || Neighbour == Encounter) { continue; }
+            if (!Neighbour->bAllowMerging)            { continue; }
+            if (FVector::DistSquared(OriginLoc, Neighbour->GetActorLocation()) > MergeRadSq)
+            {
+                continue;
+            }
+
+            // What does THIS neighbour contribute? Its own elite-variant list
+            // if authored, otherwise its base EnemyClasses. The contribution
+            // belongs to the neighbour, NOT to the triggerer — that's what
+            // makes the merge symmetric and predictable to author.
+            const TArray<TSubclassOf<ACombatantBase>>& Contribution =
+                Neighbour->EliteVariantClasses.Num() > 0
+                    ? Neighbour->EliteVariantClasses
+                    : Neighbour->GetEnemyClasses();
+
+            if (Contribution.Num() == 0) { continue; }  // nothing to bring
+
+            MergedEncounters.Add(Neighbour);
+
+            for (TSubclassOf<ACombatantBase> ClsRef : Contribution)
+            {
+                if (!ClsRef) { continue; }
+                if (Roster.Num() < MaxMergedEnemies)
+                {
+                    Roster.Add(ClsRef);
+                }
+                else if (Roster.Num() > 0)
+                {
+                    // Roster full — swap the LAST base entry with the first
+                    // overflowing contribution so the fight still feels
+                    // different (an elite shows up even if we were capped).
+                    Roster[Roster.Num() - 1] = ClsRef;
+                    break;
+                }
+            }
+        }
+
+        if (MergedEncounters.Num() > 0)
+        {
+            const int32 NumReinforcements = MergedEncounters.Num();
+            UE_LOG(LogTemp, Warning,
+                TEXT("[JrpgGameMode] AMBUSH — %d encounter(s) merged. Final roster size %d."),
+                NumReinforcements, Roster.Num());
+
+            if (GEngine)
+            {
+                GEngine->AddOnScreenDebugMessage(-1, 4.f, FColor(255, 40, 40),
+                    FString::Printf(TEXT("AMBUSH! %d reinforcement%s joined the fight"),
+                        NumReinforcements, NumReinforcements == 1 ? TEXT("") : TEXT("s")),
+                    /*bNewerOnTop=*/true, FVector2D(1.6f, 1.6f));
+            }
+        }
+    }
+
+    // ── 3. Spawn enemies from the (possibly merged) roster ───────────────────
     SpawnedEnemies.Reset();
     UWorld* World = GetWorld();
     if (World)
     {
-        for (TSubclassOf<ACombatantBase> EnemyClass : Encounter->GetEnemyClasses())
+        for (TSubclassOf<ACombatantBase> EnemyClass : Roster)
         {
             if (!EnemyClass) { continue; }
 
@@ -238,6 +314,15 @@ void AJrpgGameMode::HandleBattleEnded(bool bVictory)
         // Destroy the encounter actor so the player can't trigger it again.
         if (ActiveEncounter) { ActiveEncounter->Destroy(); }
         ActiveEncounter = nullptr;
+
+        // Destroy every neighbour that was merged into this fight — they've
+        // been consumed by the ambush. Doing this BEFORE the ResetToSpawn
+        // sweep below means the iterator there naturally skips them.
+        for (TObjectPtr<AEnemyEncounter> Merged : MergedEncounters)
+        {
+            if (Merged) { Merged->Destroy(); }
+        }
+        MergedEncounters.Reset();
 
         // Hide player party again — they'll show up at the next encounter.
         for (ACombatantBase* P : PlayerParty)

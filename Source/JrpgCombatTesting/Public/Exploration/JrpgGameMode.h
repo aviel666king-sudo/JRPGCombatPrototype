@@ -114,6 +114,26 @@ protected:
     UPROPERTY()
     TObjectPtr<AEnemyEncounter> ActiveEncounter;
 
+    /** Neighbouring encounters pulled into the active fight by the merging
+     *  mechanic. Destroyed alongside ActiveEncounter on victory. */
+    UPROPERTY()
+    TArray<TObjectPtr<AEnemyEncounter>> MergedEncounters;
+
+    /** Global merging radius (cm). When the player is caught, every encounter
+     *  inside this radius of the triggering encounter is pulled into the
+     *  fight. Set per-encounter bAllowMerging=false to opt specific enemies
+     *  out (bosses, story fights). */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "JRPG|Merging",
+              meta = (ClampMin = "0.0"))
+    float GlobalMergeRadius = 1000.f;
+
+    /** Total enemy roster cap — even if N neighbours are in GlobalMergeRadius,
+     *  we never spawn more than this many combatants. Match this to the
+     *  largest ABattleArena's enemy-slot count (currently 3). */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "JRPG|Merging",
+              meta = (ClampMin = "1"))
+    int32 MaxMergedEnemies = 3;
+
     /** Enemies spawned for the current combat. Destroyed on victory. */
     UPROPERTY()
     TArray<TObjectPtr<ACombatantBase>> SpawnedEnemies;

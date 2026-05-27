@@ -1,17 +1,10 @@
 #include "Abilities/Testing/Ability_GroundSmash.h"
 #include "Characters/Base/CombatantBase.h"
-#include "Engine/Engine.h"
 
 void UAbility_GroundSmash::Execute_Implementation(ACombatantBase* Instigator,
                                                     const TArray<ACombatantBase*>& Targets)
 {
-    // Debug message — visible on screen during testing and in the output log.
-    const FString Msg = TEXT("Enemy used Ground Smash!");
-    UE_LOG(LogTemp, Warning, TEXT("%s"), *Msg);
-    if (GEngine)
-    {
-        GEngine->AddOnScreenDebugMessage(-1, 3.f, FColor::Orange, Msg);
-    }
+    UE_LOG(LogTemp, Warning, TEXT("Enemy used Ground Smash!"));
 
     for (ACombatantBase* Target : Targets)
     {

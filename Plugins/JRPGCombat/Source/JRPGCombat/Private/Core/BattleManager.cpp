@@ -904,13 +904,9 @@ bool ABattleManager::TryResolveBattleEnd()
                 DangerMult  = Danger->GetStatMultiplier();
             }
         }
-        if (GEngine)
-        {
-            GEngine->AddOnScreenDebugMessage(
-                -1, 4.f, FColor::Green,
-                FString::Printf(TEXT("VICTORY!  Danger Level %d  (x%.2f)"),
-                    DangerLevel, DangerMult));
-        }
+        UE_LOG(LogTemp, Log, TEXT("[BattleManager] VICTORY. Danger Level %d (x%.2f)"),
+            DangerLevel, DangerMult);
+
         // Safety net: snap the camera back to the controller's pawn. The
         // GameMode also does this in HandleBattleEnded; doubling up is
         // harmless and protects against arena cameras lingering if the

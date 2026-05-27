@@ -16,9 +16,9 @@ APlayerCombatant::APlayerCombatant()
 
     // ── Player-exclusive montages ─────────────────────────────────────────────
     {
-        static ConstructorHelpers::FObjectFinder<UAnimMontage> Gun(
+        static ConstructorHelpers::FObjectFinder<UAnimMontage> GunMontageFinder(
             TEXT("/Game/Characters/Mannequins/Anims/Pistol/AM_Gun.AM_Gun"));
-        if (Gun.Succeeded()) { GunMontage = Gun.Object; }
+        if (GunMontageFinder.Succeeded()) { GunMontage = GunMontageFinder.Object; }
     }
     {
         static ConstructorHelpers::FObjectFinder<UAnimMontage> Parry(

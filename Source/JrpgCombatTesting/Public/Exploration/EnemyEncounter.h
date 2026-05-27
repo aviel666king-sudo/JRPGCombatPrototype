@@ -90,23 +90,20 @@ public:
     // -------------------------------------------------------------------------
     //  Encounter merging (Phase F)
     //
-    //  When the player is CAUGHT (combat starts with enemy initiative — i.e.
-    //  failed stealth: detection cone filled, chase-overlap, or default trigger
-    //  contact), every encounter within the game-mode's GlobalMergeRadius
-    //  contributes reinforcements to this fight. Successful stealth (player
-    //  initiative) never triggers merging.
+    //  Each encounter holds 3 base enemies (EnemyClasses) PLUS one "elite"
+    //  enemy (EliteEnemyClass) that's reserved exclusively for merged fights.
+    //  In a solo fight you only ever see the 3 base enemies — the elite is
+    //  the encounter's hidden ace, only deployed if the encounter joins a
+    //  larger ambush.
     //
-    //  How the merge is authored:
-    //   - This bool ON THIS encounter = "I can be merged with / can trigger
-    //     merges". Set false on bosses + story fights to opt out.
-    //   - EliteVariantClasses = "what classes I contribute when I'm pulled
-    //     into someone else's fight as reinforcement". Empty = contribute my
-    //     own EnemyClasses (default behaviour: just adds more of the same).
+    //  Merge rule (player-caught only, never on successful stealth):
+    //    No merge        → 3 base enemies (elite stays hidden)
+    //    +1 encounter    → triggerer's elite + neighbour's elite + 1 base
+    //    +2 encounters   → all 3 elites (no base at all — full elite fight)
+    //    +3+ encounters  → 3 elites (extras dropped, first 3 in iteration)
     //
-    //  This design is SYMMETRIC — it doesn't matter which encounter triggers,
-    //  because each encounter describes its own contribution. Set elite
-    //  classes on the tougher enemy, leave the weaker one default, and either
-    //  trigger order produces the same merged roster.
+    //  Use bAllowMerging = false on bosses / story fights to opt them out
+    //  entirely.
     // -------------------------------------------------------------------------
 
     /** Whether this encounter participates in the merging system at all
@@ -115,12 +112,13 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Encounter|Merging")
     bool bAllowMerging = true;
 
-    /** Classes I bring to the fight when pulled into someone else's combat as
-     *  a merged neighbour. Empty = use my own EnemyClasses. Set this when
-     *  this encounter is meant to behave as an "elite reinforcement" rather
-     *  than just another copy of itself. */
+    /** The single elite enemy this encounter contributes when ANY merge happens
+     *  (whether this encounter is the triggerer or a merged neighbour). Hidden
+     *  in solo fights — the encounter shows 3 base enemies only. Leave null
+     *  to skip contributing during merges; the encounter still gets consumed
+     *  but doesn't add an enemy to the fight. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Encounter|Merging")
-    TArray<TSubclassOf<ACombatantBase>> EliteVariantClasses;
+    TSubclassOf<ACombatantBase> EliteEnemyClass;
 
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Encounter")
     const TArray<TSubclassOf<ACombatantBase>>& GetEnemyClasses() const { return EnemyClasses; }

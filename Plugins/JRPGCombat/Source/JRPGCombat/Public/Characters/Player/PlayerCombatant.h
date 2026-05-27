@@ -2,8 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Characters/Base/CombatantBase.h"
-#include "CombatTypes.h"               // EElement
-#include "Equipment/EquipmentTypes.h"  // EWeaponType
+#include "CombatTypes.h"   // EElement
 #include "PlayerCombatant.generated.h"
 
 class UAnimMontage;
@@ -47,12 +46,9 @@ public:
 
     // -------------------------------------------------------------------------
     //  Identity — set in the C++ subclass constructor OR in BP defaults.
-    //  These are read by the combat HUD, dialogue system, save layer, etc.
+    //  These extend ACombatantBase::DisplayName (inherited) with player-only
+    //  identity bits read by the combat HUD, dialogue, character-select.
     // -------------------------------------------------------------------------
-
-    /** Displayed in UI, dialogue, save-file labels. */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Character|Identity")
-    FText DisplayName;
 
     /** One-line role/identity blurb. Optional, for character-select screens. */
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Character|Identity",
@@ -62,11 +58,6 @@ public:
     /** Portrait shown in combat HUD + party screen. */
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Character|Identity")
     TObjectPtr<UTexture2D> Portrait;
-
-    /** Weapon archetype this character is restricted to. The equipment system
-     *  rejects main weapons whose WeaponType doesn't match. */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Character|Identity")
-    EWeaponType WeaponType = EWeaponType::None;
 
     /** Default damage element when no weapon is equipped / for self-buffs. */
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Character|Identity")

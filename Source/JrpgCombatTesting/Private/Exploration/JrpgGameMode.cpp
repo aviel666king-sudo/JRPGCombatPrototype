@@ -107,13 +107,20 @@ void AJrpgGameMode::BeginEncounter(AEnemyEncounter* Encounter, bool bPlayerHasIn
 
     // ── 2. Build the enemy roster (with merging if the player was caught) ────
     //
-    //  Start from the triggering encounter's classes. If the player was caught
-    //  (enemy initiative) AND the encounter participates in merging, scan
-    //  every encounter inside GlobalMergeRadius. Each merged neighbour
-    //  contributes from its OWN EliteVariantClasses (falling back to its own
-    //  EnemyClasses if empty) — so the merge result is symmetric regardless
-    //  of which encounter triggered. Hard-capped at MaxMergedEnemies.
-    TArray<TSubclassOf<ACombatantBase>> Roster = Encounter->GetEnemyClasses();
+    //  Two-list build:
+    //    BaseRoster      = triggerer's EnemyClasses (the "main" enemies)
+    //    Reinforcements  = concatenation of every merged neighbour's
+    //                       EliteVariantClasses (fallback: their EnemyClasses)
+    //
+    //  Final roster is then composed by PREFERRING reinforcements over
+    //  duplicate base entries (so the elite always shows up if there's one)
+    //  while ALWAYS reserving at least one slot for the triggerer so they
+    //  appear in their own fight. Hard-capped at MaxMergedEnemies.
+    //
+    //  This makes the merge result independent of TActorIterator order — no
+    //  more "last neighbour wins the swap slot" silent overwrites.
+    TArray<TSubclassOf<ACombatantBase>> BaseRoster     = Encounter->GetEnemyClasses();
+    TArray<TSubclassOf<ACombatantBase>> Reinforcements;
     MergedEncounters.Reset();
 
     if (!bPlayerHasInitiative && Encounter->bAllowMerging && GlobalMergeRadius > 0.f)
@@ -123,8 +130,6 @@ void AJrpgGameMode::BeginEncounter(AEnemyEncounter* Encounter, bool bPlayerHasIn
 
         for (TActorIterator<AEnemyEncounter> It(GetWorld()); It; ++It)
         {
-            if (Roster.Num() >= MaxMergedEnemies) { break; }
-
             AEnemyEncounter* Neighbour = *It;
             if (!Neighbour || Neighbour == Encounter) { continue; }
             if (!Neighbour->bAllowMerging)            { continue; }
@@ -148,36 +153,55 @@ void AJrpgGameMode::BeginEncounter(AEnemyEncounter* Encounter, bool bPlayerHasIn
 
             for (TSubclassOf<ACombatantBase> ClsRef : Contribution)
             {
-                if (!ClsRef) { continue; }
-                if (Roster.Num() < MaxMergedEnemies)
-                {
-                    Roster.Add(ClsRef);
-                }
-                else if (Roster.Num() > 0)
-                {
-                    // Roster full — swap the LAST base entry with the first
-                    // overflowing contribution so the fight still feels
-                    // different (an elite shows up even if we were capped).
-                    Roster[Roster.Num() - 1] = ClsRef;
-                    break;
-                }
+                if (ClsRef) { Reinforcements.Add(ClsRef); }
             }
         }
+    }
 
-        if (MergedEncounters.Num() > 0)
+    // Compose final roster.
+    //  - Reserve 1 slot for the triggerer if it has any base classes
+    //  - Fill reinforcement slots up to (Cap - ReservedBase)
+    //  - Fill remaining slots with the rest of BaseRoster (so 0-reinforcement
+    //    fights still use all the base classes)
+    TArray<TSubclassOf<ACombatantBase>> Roster;
+    {
+        const int32 Cap            = MaxMergedEnemies;
+        const int32 ReservedBase   = (BaseRoster.Num() > 0) ? 1 : 0;
+        const int32 ReinSlotsAvail = FMath::Max(0, Cap - ReservedBase);
+        const int32 ReinSlotsUsed  = FMath::Min(Reinforcements.Num(), ReinSlotsAvail);
+
+        // Triggerer leads (slot 0). Skip if it has no base classes.
+        if (ReservedBase > 0 && BaseRoster.IsValidIndex(0))
         {
-            const int32 NumReinforcements = MergedEncounters.Num();
-            UE_LOG(LogTemp, Warning,
-                TEXT("[JrpgGameMode] AMBUSH — %d encounter(s) merged. Final roster size %d."),
-                NumReinforcements, Roster.Num());
+            Roster.Add(BaseRoster[0]);
+        }
 
-            if (GEngine)
-            {
-                GEngine->AddOnScreenDebugMessage(-1, 4.f, FColor(255, 40, 40),
-                    FString::Printf(TEXT("AMBUSH! %d reinforcement%s joined the fight"),
-                        NumReinforcements, NumReinforcements == 1 ? TEXT("") : TEXT("s")),
-                    /*bNewerOnTop=*/true, FVector2D(1.6f, 1.6f));
-            }
+        // Then reinforcements.
+        for (int32 i = 0; i < ReinSlotsUsed; ++i)
+        {
+            Roster.Add(Reinforcements[i]);
+        }
+
+        // Then fill any leftover slots with the rest of the triggerer's base.
+        for (int32 i = 1; i < BaseRoster.Num() && Roster.Num() < Cap; ++i)
+        {
+            if (BaseRoster[i]) { Roster.Add(BaseRoster[i]); }
+        }
+    }
+
+    if (MergedEncounters.Num() > 0)
+    {
+        const int32 NumReinforcements = MergedEncounters.Num();
+        UE_LOG(LogTemp, Warning,
+            TEXT("[JrpgGameMode] AMBUSH — %d encounter(s) merged. Final roster size %d."),
+            NumReinforcements, Roster.Num());
+
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 4.f, FColor(255, 40, 40),
+                FString::Printf(TEXT("AMBUSH! %d reinforcement%s joined the fight"),
+                    NumReinforcements, NumReinforcements == 1 ? TEXT("") : TEXT("s")),
+                /*bNewerOnTop=*/true, FVector2D(1.6f, 1.6f));
         }
     }
 

@@ -32,6 +32,15 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combatant|Boss")
     bool bIsBoss = false;
 
+    /** XP this enemy grants to every winning party member on defeat. Authored
+     *  per-enemy: weak mooks ~10, regulars ~25 (default), elites ~75, bosses
+     *  200+. Read by ABattleManager on victory and by AEnemyEncounter's
+     *  overworld assassination penalty (which awards 25% of this to the
+     *  attacker only). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combatant|Progression",
+              meta = (ClampMin = "0"))
+    int32 XPReward = 25;
+
     /** Reads UDangerManager and scales BaseStats by the current multiplier
      *  (skipped if bIsBoss). Then forwards to ACombatantBase::InitializeForBattle. */
     virtual void InitializeForBattle() override;

@@ -64,6 +64,55 @@ public:
     EElement PrimaryElement = EElement::Wind;
 
     // -------------------------------------------------------------------------
+    //  Progression — per-character XP / level / currency.
+    //  - XP comes from combat victories (sum of every defeated enemy's
+    //    XPReward, divided equally across the entire winning party).
+    //  - Levels apply a flat stat-growth to BaseStats and grant SkillCoins /
+    //    StatCoins. The currency is banked for the future skill-tree and
+    //    stat-shop systems; no spend UI yet.
+    //  - DangerManager.PlayerEffectiveLevel is the party-aggregate read by
+    //    the danger / encounter-merging / assassination-overlevel systems;
+    //    BattleManager recomputes it as max(party.Level) after victory.
+    // -------------------------------------------------------------------------
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Character|Progression",
+              meta = (ClampMin = "1"))
+    int32 Level = 1;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Character|Progression",
+              meta = (ClampMin = "0"))
+    int32 CurrentXP = 0;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Character|Progression",
+              meta = (ClampMin = "0"))
+    int32 SkillCoins = 0;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Character|Progression",
+              meta = (ClampMin = "0"))
+    int32 StatCoins = 0;
+
+    /** XP required to advance FROM the current level. Linear curve:
+     *  100 + 50 * (Level - 1). So L1→2 needs 100, L9→10 needs 500, L19→20
+     *  needs 1000. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Character|Progression")
+    int32 GetXPForNextLevel() const;
+
+    /** Add XP. May trigger one or more LevelUp() calls if the haul covers
+     *  multiple levels. Safe to call mid-battle; stat-growth applies to
+     *  BaseStats and propagates at the next InitializeForBattle. */
+    UFUNCTION(BlueprintCallable, Category = "Character|Progression")
+    void GrantXP(int32 Amount);
+
+protected:
+
+    /** Single level-up step. Increments Level, applies flat stat growth to
+     *  BaseStats (+5 HP, +1 Atk, +1 Def, +1 Spd), grants currency (+2 Skill,
+     *  +3 Stat). Called from GrantXP when CurrentXP crosses the threshold. */
+    void LevelUp();
+
+public:
+
+    // -------------------------------------------------------------------------
     //  Equipment slots — 3 chips + 1 armor + 2 weapons (main + gun).
     //
     //  These are EditAnywhere so a placed BP_Player<X> in the level can have

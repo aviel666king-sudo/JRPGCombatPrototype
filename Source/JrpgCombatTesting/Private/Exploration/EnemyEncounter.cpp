@@ -3,6 +3,8 @@
 #include "Exploration/ExplorationPawn.h"
 #include "Exploration/EnemyDetectionComponent.h"
 #include "Core/DangerManager.h"
+#include "Characters/Enemy/EnemyCombatant.h"
+#include "Characters/Player/PlayerCombatant.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Kismet/GameplayStatics.h"
@@ -716,9 +718,57 @@ void AEnemyEncounter::Assassinate(APawn* /*Attacker*/)
         TEXT("[EnemyEncounter] %s ASSASSINATED — instant kill, no combat. (EncounterLvl=%d)"),
         *GetName(), EncounterLevel);
 
-    // TODO: award reduced XP to attacker only — needs XP system first.
-    // For now we just destroy the encounter, matching the pitch's "resolves
-    // the encounter immediately without entering combat".
+    // Per pitch: "XP severely reduced + only the attacker gets it".
+    // We sum the would-be XP from this encounter's classes (read from each
+    // CDO's default XPReward) and grant 25% to the lead party member (slot
+    // 0). The rest of the party gets nothing. Recompute aggregate level so
+    // the danger / overlevel systems stay in sync.
+    int32 TotalXP = 0;
+    for (TSubclassOf<ACombatantBase> EnemyClass : EnemyClasses)
+    {
+        if (!EnemyClass) { continue; }
+        if (const AEnemyCombatant* CDO = EnemyClass->GetDefaultObject<AEnemyCombatant>())
+        {
+            TotalXP += FMath::Max(0, CDO->XPReward);
+        }
+    }
+
+    const int32 ReducedXP = FMath::FloorToInt(TotalXP * 0.25f);
+
+    if (AJrpgGameMode* GM = Cast<AJrpgGameMode>(UGameplayStatics::GetGameMode(this)))
+    {
+        const TArray<ACombatantBase*>& Party = GM->GetPlayerParty();
+
+        if (ReducedXP > 0 && Party.Num() > 0)
+        {
+            if (APlayerCombatant* Lead = Cast<APlayerCombatant>(Party[0]))
+            {
+                UE_LOG(LogTemp, Log,
+                    TEXT("[EnemyEncounter] Assassination XP %d (25%% of %d) → %s only"),
+                    ReducedXP, TotalXP,
+                    Lead->DisplayName.IsEmpty() ? *Lead->GetName() : *Lead->DisplayName.ToString());
+                Lead->GrantXP(ReducedXP);
+            }
+        }
+
+        // Recompute aggregate level in case Lead leveled up.
+        if (UGameInstance* GI = GetGameInstance())
+        {
+            if (UDangerManager* DM = GI->GetSubsystem<UDangerManager>())
+            {
+                int32 MaxLevel = 1;
+                for (ACombatantBase* C : Party)
+                {
+                    if (APlayerCombatant* P = Cast<APlayerCombatant>(C))
+                    {
+                        MaxLevel = FMath::Max(MaxLevel, P->Level);
+                    }
+                }
+                DM->SetPlayerEffectiveLevel(MaxLevel);
+            }
+        }
+    }
+
     Destroy();
 }
 

@@ -1,6 +1,8 @@
 #include "Core/BattleManager.h"
 #include "Core/BattleArena.h"
 #include "Characters/Base/CombatantBase.h"
+#include "Characters/Enemy/EnemyCombatant.h"
+#include "Characters/Player/PlayerCombatant.h"
 #include "Components/CapsuleComponent.h"
 #include "Core/TurnOrderManager.h"
 #include "Components/AbilityManagerComponent.h"
@@ -906,6 +908,60 @@ bool ABattleManager::TryResolveBattleEnd()
         }
         UE_LOG(LogTemp, Log, TEXT("[BattleManager] VICTORY. Danger Level %d (x%.2f)"),
             DangerLevel, DangerMult);
+
+        // ── XP award ─────────────────────────────────────────────────────────
+        // Sum XPReward across every defeated enemy, distribute equally to
+        // every player party member (pitch: "only the party that won gets XP"
+        // — entire party, not just survivors). After granting, recompute
+        // DangerManager.PlayerEffectiveLevel as max(party.Level).
+        {
+            int32 TotalXP = 0;
+            for (TObjectPtr<ACombatantBase> C : AllCombatants)
+            {
+                if (AEnemyCombatant* Enemy = Cast<AEnemyCombatant>(C.Get()))
+                {
+                    TotalXP += FMath::Max(0, Enemy->XPReward);
+                }
+            }
+
+            // Collect player members for distribution + level recompute.
+            TArray<APlayerCombatant*> PlayerMembers;
+            for (TObjectPtr<ACombatantBase> C : AllCombatants)
+            {
+                if (APlayerCombatant* P = Cast<APlayerCombatant>(C.Get()))
+                {
+                    PlayerMembers.Add(P);
+                }
+            }
+
+            if (TotalXP > 0 && PlayerMembers.Num() > 0)
+            {
+                const int32 PerMember = FMath::Max(1, TotalXP / PlayerMembers.Num());
+                UE_LOG(LogTemp, Log,
+                    TEXT("[BattleManager] Awarding %d XP per member (%d total / %d members)."),
+                    PerMember, TotalXP, PlayerMembers.Num());
+
+                for (APlayerCombatant* P : PlayerMembers)
+                {
+                    if (P) { P->GrantXP(PerMember); }
+                }
+            }
+
+            // Recompute aggregate party level for the danger / merging /
+            // assassination-overlevel systems.
+            if (UGameInstance* GI = GetGameInstance())
+            {
+                if (UDangerManager* Danger = GI->GetSubsystem<UDangerManager>())
+                {
+                    int32 MaxLevel = 1;
+                    for (APlayerCombatant* P : PlayerMembers)
+                    {
+                        if (P) { MaxLevel = FMath::Max(MaxLevel, P->Level); }
+                    }
+                    Danger->SetPlayerEffectiveLevel(MaxLevel);
+                }
+            }
+        }
 
         // Safety net: snap the camera back to the controller's pawn. The
         // GameMode also does this in HandleBattleEnded; doubling up is

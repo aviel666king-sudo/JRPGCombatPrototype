@@ -1,5 +1,6 @@
 #include "Exploration/ExplorationPawn.h"
 #include "Exploration/EnemyEncounter.h"
+#include "Exploration/Checkpoint.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Camera/CameraComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -173,6 +174,14 @@ void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
         {
             EIC->BindAction(AssassinateAction, ETriggerEvent::Started, this, &AExplorationPawn::HandleAssassinate);
         }
+        if (InteractAction)
+        {
+            EIC->BindAction(InteractAction, ETriggerEvent::Started, this, &AExplorationPawn::HandleInteract);
+        }
+        if (HealAction)
+        {
+            EIC->BindAction(HealAction, ETriggerEvent::Started, this, &AExplorationPawn::HandleHeal);
+        }
     }
 
     // Direct-key fallback for crouch — binds the C key on the raw input
@@ -195,6 +204,20 @@ void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
     {
         PlayerInputComponent->BindKey(EKeys::Q, IE_Pressed, this, &AExplorationPawn::HandleAssassinate);
         UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Assassinate bound to Q key via direct fallback (no IA_Assassinate assigned)"));
+    }
+
+    // E-key fallback for interact (checkpoints, etc.).
+    if (PlayerInputComponent && !InteractAction)
+    {
+        PlayerInputComponent->BindKey(EKeys::E, IE_Pressed, this, &AExplorationPawn::HandleInteract);
+        UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Interact bound to E key via direct fallback (no IA_Interact assigned)"));
+    }
+
+    // H-key fallback for healing protocol use.
+    if (PlayerInputComponent && !HealAction)
+    {
+        PlayerInputComponent->BindKey(EKeys::H, IE_Pressed, this, &AExplorationPawn::HandleHeal);
+        UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Heal bound to H key via direct fallback (no IA_Heal assigned)"));
     }
 }
 
@@ -564,6 +587,54 @@ AEnemyEncounter* AExplorationPawn::TraceForEncounter() const
 
     if (!bHit) { return nullptr; }
     return Cast<AEnemyEncounter>(Hit.GetActor());
+}
+
+// -----------------------------------------------------------------------------
+//  Interact (checkpoints / rest points)
+// -----------------------------------------------------------------------------
+
+void AExplorationPawn::HandleInteract()
+{
+    // Don't try to interact mid-channel — assassination has its own state machine.
+    if (bIsAssassinating || bIsCastingCone) { return; }
+
+    UWorld* World = GetWorld();
+    if (!World) { return; }
+
+    // Pick the closest in-range checkpoint. Multiple overlapping is unlikely
+    // but handle it gracefully.
+    ACheckpoint* Best     = nullptr;
+    float        BestDist = TNumericLimits<float>::Max();
+    for (TActorIterator<ACheckpoint> It(World); It; ++It)
+    {
+        ACheckpoint* CP = *It;
+        if (!CP || !CP->IsPlayerInRange()) { continue; }
+        const float D = FVector::DistSquared(CP->GetActorLocation(), GetActorLocation());
+        if (D < BestDist)
+        {
+            BestDist = D;
+            Best     = CP;
+        }
+    }
+
+    if (Best)
+    {
+        Best->Rest(this);
+    }
+}
+
+// -----------------------------------------------------------------------------
+//  Healing protocol use (overworld)
+// -----------------------------------------------------------------------------
+
+void AExplorationPawn::HandleHeal()
+{
+    if (bIsAssassinating || bIsCastingCone) { return; }
+
+    if (AJrpgGameMode* GM = Cast<AJrpgGameMode>(UGameplayStatics::GetGameMode(this)))
+    {
+        GM->UseHealingProtocolOverworld();
+    }
 }
 
 void AExplorationPawn::GatherEncountersInCone(TArray<AEnemyEncounter*>& Out) const

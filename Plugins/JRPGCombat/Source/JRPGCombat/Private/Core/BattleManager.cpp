@@ -961,6 +961,33 @@ bool ABattleManager::TryResolveBattleEnd()
                     Danger->SetPlayerEffectiveLevel(MaxLevel);
                 }
             }
+
+            // ── Post-victory auto-revive ─────────────────────────────────────
+            // Any party member who died during the fight comes back at exactly
+            // 1 HP. Pitch rule: you don't lose characters from a won battle,
+            // but they're left vulnerable until you heal (overworld potion or
+            // rest at checkpoint).
+            for (APlayerCombatant* P : PlayerMembers)
+            {
+                if (!P) { continue; }
+                if (P->GetCurrentHP() <= 0.f)
+                {
+                    const float MaxHP = P->GetMaxHP();
+                    if (MaxHP > 0.f)
+                    {
+                        P->Revive(1.f / MaxHP);
+                        UE_LOG(LogTemp, Log, TEXT("[BattleManager] Auto-revived %s at 1 HP"),
+                            *P->GetName());
+                        // Temporary on-screen feedback. Removed once HUD lands.
+                        if (GEngine)
+                        {
+                            GEngine->AddOnScreenDebugMessage(-1, 4.f, FColor::Orange,
+                                FString::Printf(TEXT("%s revived at 1 HP - heal soon!"),
+                                    *P->GetName()));
+                        }
+                    }
+                }
+            }
         }
 
         // Safety net: snap the camera back to the controller's pawn. The

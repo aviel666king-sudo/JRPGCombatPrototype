@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
+#include "CombatTypes.h"  // EProtocolType
 #include "JrpgGameMode.generated.h"
 
 class ACombatantBase;
@@ -84,6 +85,74 @@ public:
      */
     UFUNCTION(BlueprintCallable, Category = "JRPG|Encounter")
     void BeginEncounter(AEnemyEncounter* Encounter, bool bPlayerHasInitiative = false);
+
+    // -------------------------------------------------------------------------
+    //  Overworld protocol use
+    // -------------------------------------------------------------------------
+
+    /**
+     * Spend one Healing Protocol charge to fully restore every living party
+     * member to MaxHP. Bound to H by ExplorationPawn.
+     *
+     * Returns true if the charge was spent. Returns false (no charge spent) if:
+     *   - Battle is active
+     *   - ProtocolManager unavailable
+     *   - No Healing charges remaining
+     *   - All party members already at full HP (waste guard)
+     *
+     * NOTE: Dead members are NOT revived by overworld heal — that's what the
+     * Revival protocol / camp rest / win auto-revive is for.
+     */
+    UFUNCTION(BlueprintCallable, Category = "JRPG|Protocols")
+    bool UseHealingProtocolOverworld();
+
+    // -------------------------------------------------------------------------
+    //  HUD data getters
+    //
+    //  Indexed accessors so WBP_ExplorationHUD can bind each party slot / charge
+    //  counter directly with no struct-breaking in the graph. Slot index 0..2.
+    //  All are safe to call with out-of-range indices (return empty / 0).
+    // -------------------------------------------------------------------------
+
+    /** Number of party members currently registered. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "JRPG|HUD")
+    int32 GetPartySize() const { return PlayerParty.Num(); }
+
+    /** True if a living-or-dead member exists at this slot. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "JRPG|HUD")
+    bool IsPartyMemberValid(int32 Index) const;
+
+    /** Member display name, or empty text if the slot is invalid. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "JRPG|HUD")
+    FText GetPartyMemberName(int32 Index) const;
+
+    /** Member level, or 0 if invalid / not a player combatant. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "JRPG|HUD")
+    int32 GetPartyMemberLevel(int32 Index) const;
+
+    /** 0..1 HP fraction for a ProgressBar. 0 if invalid. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "JRPG|HUD")
+    float GetPartyMemberHPPercent(int32 Index) const;
+
+    /** "84 / 120" style HP label. Empty if invalid. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "JRPG|HUD")
+    FText GetPartyMemberHPText(int32 Index) const;
+
+    /** True if this member is downed (0 HP). HUD can grey the row / show a skull. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "JRPG|HUD")
+    bool IsPartyMemberDead(int32 Index) const;
+
+    /** Current charges of a protocol in the shared party pool. 0 if no manager. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "JRPG|HUD")
+    int32 GetProtocolCharges(EProtocolType Type) const;
+
+    /** Max charges of a protocol. 0 if no manager. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "JRPG|HUD")
+    int32 GetProtocolMaxCharges(EProtocolType Type) const;
+
+    /** "Heal 2/2" style label for a protocol counter. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "JRPG|HUD")
+    FText GetProtocolChargesText(EProtocolType Type) const;
 
 protected:
 

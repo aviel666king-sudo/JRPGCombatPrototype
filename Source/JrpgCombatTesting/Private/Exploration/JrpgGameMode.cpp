@@ -2,8 +2,11 @@
 #include "Exploration/ExplorationPawn.h"
 #include "Exploration/EnemyEncounter.h"
 #include "Core/BattleManager.h"
+#include "Components/ProtocolManagerComponent.h"
+#include "CombatTypes.h"
 #include "Core/BattleArena.h"
 #include "Characters/Base/CombatantBase.h"
+#include "Characters/Player/PlayerCombatant.h"
 #include "UI/CombatHUDWidget.h"
 #include "Blueprint/UserWidget.h"
 #include "GameFramework/PlayerController.h"
@@ -383,4 +386,154 @@ void AJrpgGameMode::HandleBattleEnded(bool bVictory)
         // show a Game Over screen. TODO: add Game Over flow.
         UE_LOG(LogTemp, Warning, TEXT("[JrpgGameMode] Defeat — Game Over flow not implemented yet."));
     }
+}
+
+// -----------------------------------------------------------------------------
+//  Overworld protocol use
+// -----------------------------------------------------------------------------
+
+// Temporary on-screen feedback. Removed once the proper HUD lands.
+static void ShowToast(const FString& Msg, FColor Color, float Duration = 2.5f)
+{
+    if (GEngine)
+    {
+        GEngine->AddOnScreenDebugMessage(-1, Duration, Color, Msg);
+    }
+}
+
+bool AJrpgGameMode::UseHealingProtocolOverworld()
+{
+    if (WorldMode != EWorldMode::Exploring)
+    {
+        UE_LOG(LogTemp, Log, TEXT("[Protocol] Cannot use healing protocol during combat."));
+        return false;
+    }
+    if (!BattleManager || !BattleManager->ProtocolManager)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[Protocol] No ProtocolManager available."));
+        ShowToast(TEXT("Heal failed: no ProtocolManager"), FColor::Red);
+        return false;
+    }
+
+    UProtocolManagerComponent* Pool = BattleManager->ProtocolManager;
+    if (!Pool->CanSpend(EProtocolType::Healing))
+    {
+        UE_LOG(LogTemp, Log, TEXT("[Protocol] No Healing charges remaining."));
+        ShowToast(TEXT("No healing charges left"), FColor::Red);
+        return false;
+    }
+
+    // Waste guard — refuse if everyone living is already full.
+    bool bAnyNeedsHealing = false;
+    for (ACombatantBase* P : PlayerParty)
+    {
+        if (P && P->GetCurrentHP() > 0.f && P->GetMissingHP() > 0.f)
+        {
+            bAnyNeedsHealing = true;
+            break;
+        }
+    }
+    if (!bAnyNeedsHealing)
+    {
+        UE_LOG(LogTemp, Log, TEXT("[Protocol] No one needs healing."));
+        ShowToast(TEXT("Party is at full HP"), FColor::Yellow);
+        return false;
+    }
+
+    for (ACombatantBase* P : PlayerParty)
+    {
+        if (!P || P->GetCurrentHP() <= 0.f) { continue; }
+        const float Missing = P->GetMissingHP();
+        if (Missing > 0.f)
+        {
+            P->ApplyHealing(Missing, nullptr);
+            UE_LOG(LogTemp, Log, TEXT("[Protocol] Healed %s -> %.0f / %.0f"),
+                *P->GetName(), P->GetCurrentHP(), P->GetMaxHP());
+        }
+    }
+
+    Pool->SpendCharge(EProtocolType::Healing);
+    const int32 Remaining = Pool->GetCurrentCharges(EProtocolType::Healing);
+    const int32 Maximum   = Pool->GetMaxCharges(EProtocolType::Healing);
+    UE_LOG(LogTemp, Log, TEXT("[Protocol] Healing charge spent. %d remaining."), Remaining);
+    ShowToast(FString::Printf(TEXT("Party healed!  Heal charges: %d / %d"), Remaining, Maximum),
+              FColor::Green);
+    return true;
+}
+
+// -----------------------------------------------------------------------------
+//  HUD data getters
+// -----------------------------------------------------------------------------
+
+bool AJrpgGameMode::IsPartyMemberValid(int32 Index) const
+{
+    return PlayerParty.IsValidIndex(Index) && PlayerParty[Index] != nullptr;
+}
+
+FText AJrpgGameMode::GetPartyMemberName(int32 Index) const
+{
+    if (!IsPartyMemberValid(Index)) { return FText::GetEmpty(); }
+    return PlayerParty[Index]->DisplayName;
+}
+
+int32 AJrpgGameMode::GetPartyMemberLevel(int32 Index) const
+{
+    if (!IsPartyMemberValid(Index)) { return 0; }
+    if (const APlayerCombatant* P = Cast<APlayerCombatant>(PlayerParty[Index]))
+    {
+        return P->Level;
+    }
+    return 0;
+}
+
+float AJrpgGameMode::GetPartyMemberHPPercent(int32 Index) const
+{
+    if (!IsPartyMemberValid(Index)) { return 0.f; }
+    return PlayerParty[Index]->GetHealthPercent();
+}
+
+FText AJrpgGameMode::GetPartyMemberHPText(int32 Index) const
+{
+    if (!IsPartyMemberValid(Index)) { return FText::GetEmpty(); }
+    const ACombatantBase* C = PlayerParty[Index];
+    return FText::FromString(FString::Printf(TEXT("%.0f / %.0f"),
+        C->GetCurrentHP(), C->GetMaxHP()));
+}
+
+bool AJrpgGameMode::IsPartyMemberDead(int32 Index) const
+{
+    if (!IsPartyMemberValid(Index)) { return false; }
+    return PlayerParty[Index]->GetCurrentHP() <= 0.f;
+}
+
+int32 AJrpgGameMode::GetProtocolCharges(EProtocolType Type) const
+{
+    if (BattleManager && BattleManager->ProtocolManager)
+    {
+        return BattleManager->ProtocolManager->GetCurrentCharges(Type);
+    }
+    return 0;
+}
+
+int32 AJrpgGameMode::GetProtocolMaxCharges(EProtocolType Type) const
+{
+    if (BattleManager && BattleManager->ProtocolManager)
+    {
+        return BattleManager->ProtocolManager->GetMaxCharges(Type);
+    }
+    return 0;
+}
+
+FText AJrpgGameMode::GetProtocolChargesText(EProtocolType Type) const
+{
+    FString Label;
+    switch (Type)
+    {
+    case EProtocolType::Healing: Label = TEXT("Heal");    break;
+    case EProtocolType::Revival: Label = TEXT("Revive");  break;
+    case EProtocolType::AP:      Label = TEXT("AP");       break;
+    default:                     Label = TEXT("?");        break;
+    }
+    return FText::FromString(FString::Printf(TEXT("%s %d/%d"),
+        *Label, GetProtocolCharges(Type), GetProtocolMaxCharges(Type)));
 }

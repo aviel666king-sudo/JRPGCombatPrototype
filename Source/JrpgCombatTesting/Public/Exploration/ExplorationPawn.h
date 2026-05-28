@@ -83,6 +83,16 @@ public:
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Input")
     TObjectPtr<UInputAction> AssassinateAction;
 
+    /** E to interact with the nearest in-range ACheckpoint. Direct-key fallback
+     *  to E if no IA asset is wired. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Input")
+    TObjectPtr<UInputAction> InteractAction;
+
+    /** H to spend one Healing Protocol charge — fully heals all living party
+     *  members to MaxHP. Direct-key fallback to H. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Input")
+    TObjectPtr<UInputAction> HealAction;
+
     // -------------------------------------------------------------------------
     //  Gun — tunables
     // -------------------------------------------------------------------------
@@ -231,6 +241,8 @@ protected:
     void HandleConeShot();
     void HandleCrouchToggle();
     void HandleAssassinate();
+    void HandleInteract();
+    void HandleHeal();
 
     /** Helper: line trace forward from the camera. Returns the encounter hit, if any. */
     class AEnemyEncounter* TraceForEncounter() const;

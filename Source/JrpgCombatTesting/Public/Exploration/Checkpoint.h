@@ -1,0 +1,79 @@
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "Checkpoint.generated.h"
+
+class USphereComponent;
+class UStaticMeshComponent;
+class APawn;
+
+/**
+ * ACheckpoint
+ *
+ * Placeable "rest point" actor. The player walks into the interact sphere and
+ * presses E to rest. Resting heals the whole party, clears danger, resets all
+ * non-boss encounters in the level back to their home location (Souls-like
+ * respawn). UI / save / coin-spend tabs come in later commits.
+ *
+ *  Place one near spawn in GroundZero.umap for first-pass testing.
+ */
+UCLASS(Blueprintable, BlueprintType)
+class JRPGCOMBATTESTING_API ACheckpoint : public AActor
+{
+    GENERATED_BODY()
+
+public:
+
+    ACheckpoint();
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Checkpoint")
+    TObjectPtr<UStaticMeshComponent> Mesh;
+
+    /** Player must overlap this sphere to be able to rest. */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Checkpoint")
+    TObjectPtr<USphereComponent> InteractSphere;
+
+    /** Interaction radius in cm. Editable per-instance. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Checkpoint",
+              meta = (ClampMin = "50.0"))
+    float InteractRadius = 250.f;
+
+    /** True while the player pawn is overlapping the sphere. The pawn reads
+     *  this to decide whether E should trigger Rest. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Checkpoint")
+    bool IsPlayerInRange() const { return bPlayerInRange; }
+
+    /** Execute the rest action. Caller must already have confirmed the player
+     *  is in range. Heals the party, clears danger, resets all non-boss
+     *  encounters. Safe to call from C++ or BP. */
+    UFUNCTION(BlueprintCallable, Category = "Checkpoint")
+    void Rest(APawn* Resting);
+
+protected:
+
+    virtual void BeginPlay() override;
+    virtual void Tick(float DeltaTime) override;
+
+    UFUNCTION()
+    void HandleBeginOverlap(UPrimitiveComponent* OverlappedComponent,
+                            AActor* OtherActor,
+                            UPrimitiveComponent* OtherComp,
+                            int32 OtherBodyIndex,
+                            bool bFromSweep,
+                            const FHitResult& SweepResult);
+
+    UFUNCTION()
+    void HandleEndOverlap(UPrimitiveComponent* OverlappedComponent,
+                          AActor* OtherActor,
+                          UPrimitiveComponent* OtherComp,
+                          int32 OtherBodyIndex);
+
+    UPROPERTY(BlueprintReadOnly, Category = "Checkpoint")
+    bool bPlayerInRange = false;
+
+#if !UE_BUILD_SHIPPING
+    /** Draws a green "E - Rest" billboard above the actor while in range. */
+    void DrawInteractPrompt();
+#endif
+};

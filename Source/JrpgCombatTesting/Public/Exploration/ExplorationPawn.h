@@ -108,6 +108,15 @@ public:
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|UI")
     TSubclassOf<class UStatShopWidget> StatShopClass;
 
+    /** J to open the skill tree anywhere (also reachable at checkpoints). Press
+     *  again to close. Direct-key fallback to J. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Input")
+    TObjectPtr<UInputAction> SkillTreeAction;
+
+    /** Widget class for the skill-tree overlay. Defaults to the C++ class. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|UI")
+    TSubclassOf<class USkillTreeWidget> SkillTreeClass;
+
     // -------------------------------------------------------------------------
     //  Gun — tunables
     // -------------------------------------------------------------------------
@@ -271,6 +280,11 @@ protected:
     void OpenStatShop();
     void CloseStatShop();
 
+    /** Toggle the skill tree. Opens anywhere (J). */
+    void HandleToggleSkillTree();
+    void OpenSkillTree();
+    void CloseSkillTree();
+
     /** Helper: line trace forward from the camera. Returns the encounter hit, if any. */
     class AEnemyEncounter* TraceForEncounter() const;
 
@@ -300,10 +314,14 @@ protected:
     bool  bIsCrouching      = false;
     bool  bPartyPanelOpen   = false;
     bool  bShopOpen         = false;
+    bool  bSkillTreeOpen    = false;
     float CooldownRemaining = 0.f;
 
     UPROPERTY()
     TObjectPtr<class UStatShopWidget> StatShopWidget;
+
+    UPROPERTY()
+    TObjectPtr<class USkillTreeWidget> SkillTreeWidget;
 
     bool  bIsAssassinating     = false;
     float AssassinationElapsed = 0.f;

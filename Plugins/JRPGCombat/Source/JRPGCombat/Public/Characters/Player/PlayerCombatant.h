@@ -10,6 +10,8 @@ class UTexture2D;
 class UCharacterChipDataAsset;
 class UCharacterWeaponDataAsset;
 class UCharacterArmorDataAsset;
+class USkillTreeDataAsset;
+class UCombatAbility;
 
 /** Stats the stat-shop can permanently upgrade with StatCoins. */
 UENUM(BlueprintType)
@@ -113,6 +115,10 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Character|Progression")
     void GrantXP(int32 Amount);
 
+    /** DEBUG: force one immediate level-up (stat growth + currency). Wired to
+     *  a debug button in the skill-tree screen. */
+    void DebugLevelUp();
+
     // -------------------------------------------------------------------------
     //  Stat shop — spend StatCoins on permanent BaseStats upgrades. Read by
     //  UStatShopWidget (opened at checkpoints).
@@ -135,7 +141,81 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Character|StatShop")
     bool TryUpgradeStat(EUpgradeStat Stat);
 
+    // -------------------------------------------------------------------------
+    //  Skill tree — spend SkillCoins to unlock combat abilities. The branching
+    //  structure (nodes, costs, prerequisites) lives in SkillTree; the unlocked
+    //  set lives here. Unlocked abilities are merged into the combat menu by
+    //  UAbilityManagerComponent::InitializeAbilities.
+    // -------------------------------------------------------------------------
+
+    /** This character's skill-tree definition. Assign in the BP. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Character|SkillTree")
+    TObjectPtr<USkillTreeDataAsset> SkillTree;
+
+    /** True if the given node has been bought. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Character|SkillTree")
+    bool IsNodeUnlocked(FName NodeId) const { return UnlockedNodes.Contains(NodeId); }
+
+    /** True if every prerequisite of the node is already unlocked. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Character|SkillTree")
+    bool ArePrerequisitesMet(FName NodeId) const;
+
+    /** True if the node exists, isn't already unlocked, prereqs are met, and
+     *  the player can afford the SkillCoin cost. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Character|SkillTree")
+    bool CanUnlockNode(FName NodeId) const;
+
+    /** Spend SkillCoins to unlock the node. Returns false if CanUnlockNode is
+     *  false. On success the granted ability appears in the next battle. */
+    UFUNCTION(BlueprintCallable, Category = "Character|SkillTree")
+    bool TryUnlockNode(FName NodeId);
+
+    /** Collect the ability classes for every unlocked node. */
+    void GetUnlockedAbilityClasses(TArray<TSubclassOf<UCombatAbility>>& Out) const;
+
+    /** Read-only access to this character's tree (for the skill-tree UI). */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Character|SkillTree")
+    USkillTreeDataAsset* GetSkillTree() const { return SkillTree; }
+
+    // -------------------------------------------------------------------------
+    //  Skill loadout — a character may UNLOCK any number of skills but only
+    //  EQUIP up to MaxEquippedSkills into battle at once. The combat menu is
+    //  built from the equipped set; the player swaps them in the skill tree.
+    // -------------------------------------------------------------------------
+
+    static constexpr int32 MaxEquippedSkills = 6;
+
+    bool  IsNodeEquipped(FName NodeId) const { return EquippedNodes.Contains(NodeId); }
+    int32 GetEquippedSkillCount() const      { return EquippedNodes.Num(); }
+    bool  CanEquipMore() const               { return EquippedNodes.Num() < MaxEquippedSkills; }
+
+    /** Equip an unlocked skill if there's a free slot. Returns false otherwise. */
+    bool TryEquipNode(FName NodeId);
+
+    /** Remove a skill from the active loadout. */
+    void UnequipNode(FName NodeId);
+
+    /** Equip if benched (and room), unequip if currently equipped. */
+    bool ToggleEquipNode(FName NodeId);
+
+    /** Ability classes for the currently equipped skills (combat menu source). */
+    void GetEquippedAbilityClasses(TArray<TSubclassOf<UCombatAbility>>& Out) const;
+
 protected:
+
+    virtual void BeginPlay() override;
+
+    /** Subclasses fill OutTree with their character-specific skill nodes when
+     *  no SkillTree asset was assigned in the editor. Base does nothing. */
+    virtual void PopulateDefaultSkillTree(USkillTreeDataAsset* OutTree) const {}
+
+    /** Set of unlocked skill-tree node ids. Persists on the runtime actor. */
+    UPROPERTY(BlueprintReadOnly, Category = "Character|SkillTree")
+    TSet<FName> UnlockedNodes;
+
+    /** Ordered list of equipped node ids (max MaxEquippedSkills). Subset of
+     *  UnlockedNodes. Drives which skills appear in the combat menu. */
+    TArray<FName> EquippedNodes;
 
     /** Single level-up step. Increments Level, applies flat stat growth to
      *  BaseStats (+5 HP, +1 Atk, +1 Def, +1 Spd), grants currency (+2 Skill,

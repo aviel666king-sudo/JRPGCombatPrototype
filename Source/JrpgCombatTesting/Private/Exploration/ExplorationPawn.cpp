@@ -21,6 +21,7 @@
 #include "Exploration/JrpgGameMode.h"
 #include "Exploration/EnemyDetectionComponent.h"
 #include "UI/StatShopWidget.h"
+#include "UI/SkillTreeWidget.h"
 #include "Kismet/GameplayStatics.h"
 
 AExplorationPawn::AExplorationPawn()
@@ -193,6 +194,10 @@ void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
         {
             EIC->BindAction(ShopAction, ETriggerEvent::Started, this, &AExplorationPawn::HandleToggleShop);
         }
+        if (SkillTreeAction)
+        {
+            EIC->BindAction(SkillTreeAction, ETriggerEvent::Started, this, &AExplorationPawn::HandleToggleSkillTree);
+        }
     }
 
     // Direct-key fallback for crouch — binds the C key on the raw input
@@ -244,6 +249,13 @@ void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
     {
         PlayerInputComponent->BindKey(EKeys::K, IE_Pressed, this, &AExplorationPawn::HandleToggleShop);
         UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Stat shop bound to K key via direct fallback (no IA_Shop assigned)"));
+    }
+
+    // J-key fallback for the skill tree (toggle; opens anywhere).
+    if (PlayerInputComponent && !SkillTreeAction)
+    {
+        PlayerInputComponent->BindKey(EKeys::J, IE_Pressed, this, &AExplorationPawn::HandleToggleSkillTree);
+        UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Skill tree bound to J key via direct fallback (no IA_SkillTree assigned)"));
     }
 }
 
@@ -662,6 +674,7 @@ void AExplorationPawn::HandleToggleShop()
 void AExplorationPawn::OpenStatShop()
 {
     if (bShopOpen || bIsAssassinating || bIsCastingCone) { return; }
+    if (bSkillTreeOpen) { CloseSkillTree(); }   // mutually exclusive menus
 
     UWorld* World = GetWorld();
     if (!World) { return; }
@@ -708,6 +721,55 @@ void AExplorationPawn::CloseStatShop()
         StatShopWidget = nullptr;
     }
     bShopOpen = false;
+
+    if (APlayerController* PC = Cast<APlayerController>(GetController()))
+    {
+        PC->SetShowMouseCursor(false);
+        PC->SetInputMode(FInputModeGameOnly());
+    }
+}
+
+// -----------------------------------------------------------------------------
+//  Skill tree (opens anywhere via J)
+// -----------------------------------------------------------------------------
+
+void AExplorationPawn::HandleToggleSkillTree()
+{
+    if (bSkillTreeOpen) { CloseSkillTree(); }
+    else                { OpenSkillTree(); }
+}
+
+void AExplorationPawn::OpenSkillTree()
+{
+    if (bSkillTreeOpen || bIsAssassinating || bIsCastingCone) { return; }
+    if (bShopOpen) { CloseStatShop(); }   // mutually exclusive menus
+
+    APlayerController* PC = Cast<APlayerController>(GetController());
+    if (!PC) { return; }
+
+    UClass* WidgetClass = SkillTreeClass ? SkillTreeClass.Get() : USkillTreeWidget::StaticClass();
+    SkillTreeWidget = CreateWidget<USkillTreeWidget>(PC, WidgetClass);
+    if (!SkillTreeWidget) { return; }
+
+    SkillTreeWidget->OnCloseRequested = [this]() { CloseSkillTree(); };
+    SkillTreeWidget->AddToViewport(50);
+    bSkillTreeOpen = true;
+
+    PC->SetShowMouseCursor(true);
+    FInputModeUIOnly Mode;
+    Mode.SetWidgetToFocus(SkillTreeWidget->TakeWidget());
+    Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+    PC->SetInputMode(Mode);
+}
+
+void AExplorationPawn::CloseSkillTree()
+{
+    if (SkillTreeWidget)
+    {
+        SkillTreeWidget->RemoveFromParent();
+        SkillTreeWidget = nullptr;
+    }
+    bSkillTreeOpen = false;
 
     if (APlayerController* PC = Cast<APlayerController>(GetController()))
     {
@@ -813,6 +875,7 @@ void AExplorationPawn::HandleMove(const FInputActionValue& Value)
     if (bIsCastingCone)    { return; }
     if (bIsAssassinating)  { return; }
     if (bShopOpen)         { return; }   // frozen while the stat shop is open
+    if (bSkillTreeOpen)    { return; }   // frozen while the skill tree is open
 
     const FVector2D Axis = Value.Get<FVector2D>();
     if (!Controller || Axis.IsNearlyZero()) { return; }

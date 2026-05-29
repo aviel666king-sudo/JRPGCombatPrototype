@@ -95,6 +95,9 @@ public:
     // If no stance change happened this turn, revert to Stanceless.
     virtual void OnTurnEnd_Implementation() override;
 
+    // Builds the fencer's branching skill tree in C++ (no editor asset needed).
+    virtual void PopulateDefaultSkillTree(USkillTreeDataAsset* OutTree) const override;
+
 private:
 
     // Set to true whenever SetStance() makes a real change this turn.

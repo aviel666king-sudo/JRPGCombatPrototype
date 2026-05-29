@@ -2,6 +2,8 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Animation/AnimMontage.h"
 #include "UObject/ConstructorHelpers.h"
+#include "Progression/SkillTreeDataAsset.h"
+#include "Abilities/CombatAbility.h"
 
 APlayerCombatant::APlayerCombatant()
 {
@@ -76,6 +78,11 @@ void APlayerCombatant::LevelUp()
         *Name, Level);
 }
 
+void APlayerCombatant::DebugLevelUp()
+{
+    LevelUp();
+}
+
 // -----------------------------------------------------------------------------
 //  Stat shop
 // -----------------------------------------------------------------------------
@@ -134,4 +141,113 @@ bool APlayerCombatant::TryUpgradeStat(EUpgradeStat Stat)
     }
 
     return true;
+}
+
+// -----------------------------------------------------------------------------
+//  Skill tree
+// -----------------------------------------------------------------------------
+
+void APlayerCombatant::BeginPlay()
+{
+    Super::BeginPlay();
+
+    // If no tree asset was assigned in the editor, build the character's
+    // default tree in C++ (subclasses override PopulateDefaultSkillTree).
+    if (!SkillTree)
+    {
+        SkillTree = NewObject<USkillTreeDataAsset>(this);
+        PopulateDefaultSkillTree(SkillTree);
+    }
+}
+
+bool APlayerCombatant::ArePrerequisitesMet(FName NodeId) const
+{
+    if (!SkillTree) { return false; }
+    const FSkillNode* Node = SkillTree->FindNode(NodeId);
+    if (!Node) { return false; }
+
+    for (const FName& Prereq : Node->Prerequisites)
+    {
+        if (!UnlockedNodes.Contains(Prereq)) { return false; }
+    }
+    return true;
+}
+
+bool APlayerCombatant::CanUnlockNode(FName NodeId) const
+{
+    if (!SkillTree) { return false; }
+    const FSkillNode* Node = SkillTree->FindNode(NodeId);
+    if (!Node) { return false; }
+    if (UnlockedNodes.Contains(NodeId)) { return false; }   // already owned
+    if (!ArePrerequisitesMet(NodeId)) { return false; }
+    return SkillCoins >= Node->SkillCoinCost;
+}
+
+bool APlayerCombatant::TryUnlockNode(FName NodeId)
+{
+    if (!CanUnlockNode(NodeId)) { return false; }
+
+    const FSkillNode* Node = SkillTree->FindNode(NodeId);   // non-null per CanUnlockNode
+    SkillCoins -= Node->SkillCoinCost;
+    UnlockedNodes.Add(NodeId);
+
+    // Convenience: auto-equip a freshly unlocked skill if there's a free slot.
+    if (CanEquipMore()) { EquippedNodes.AddUnique(NodeId); }
+
+    const FString Name = DisplayName.IsEmpty() ? GetName() : DisplayName.ToString();
+    UE_LOG(LogTemp, Log, TEXT("[SkillTree] %s unlocked node '%s' (%d SkillCoins left)"),
+        *Name, *NodeId.ToString(), SkillCoins);
+    return true;
+}
+
+void APlayerCombatant::GetUnlockedAbilityClasses(TArray<TSubclassOf<UCombatAbility>>& Out) const
+{
+    if (!SkillTree) { return; }
+    for (const FSkillNode& Node : SkillTree->Nodes)
+    {
+        if (UnlockedNodes.Contains(Node.NodeId) && Node.AbilityClass)
+        {
+            Out.AddUnique(Node.AbilityClass);
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+//  Skill loadout (max MaxEquippedSkills equipped)
+// -----------------------------------------------------------------------------
+
+bool APlayerCombatant::TryEquipNode(FName NodeId)
+{
+    if (!UnlockedNodes.Contains(NodeId)) { return false; }   // can't equip what you don't own
+    if (EquippedNodes.Contains(NodeId))  { return true; }    // already equipped
+    if (!CanEquipMore())                 { return false; }   // loadout full
+    EquippedNodes.Add(NodeId);
+    return true;
+}
+
+void APlayerCombatant::UnequipNode(FName NodeId)
+{
+    EquippedNodes.Remove(NodeId);
+}
+
+bool APlayerCombatant::ToggleEquipNode(FName NodeId)
+{
+    if (EquippedNodes.Contains(NodeId))
+    {
+        EquippedNodes.Remove(NodeId);
+        return true;
+    }
+    return TryEquipNode(NodeId);
+}
+
+void APlayerCombatant::GetEquippedAbilityClasses(TArray<TSubclassOf<UCombatAbility>>& Out) const
+{
+    if (!SkillTree) { return; }
+    for (const FName& NodeId : EquippedNodes)
+    {
+        if (const FSkillNode* Node = SkillTree->FindNode(NodeId))
+        {
+            if (Node->AbilityClass) { Out.AddUnique(Node->AbilityClass); }
+        }
+    }
 }

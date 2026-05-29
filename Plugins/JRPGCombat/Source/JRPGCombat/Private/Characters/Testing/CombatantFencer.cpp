@@ -1,4 +1,12 @@
 #include "Characters/Testing/CombatantFencer.h"
+#include "Progression/SkillTreeDataAsset.h"
+#include "Abilities/Testing/Ability_OffensiveSwitch.h"
+#include "Abilities/Testing/Ability_Spark.h"
+#include "Abilities/Testing/Ability_Combustion.h"
+#include "Abilities/Testing/Ability_GuardDown.h"
+#include "Abilities/Testing/Ability_FencersFlurry.h"
+#include "Abilities/Testing/Ability_RainOfFire.h"
+#include "Abilities/Testing/Ability_Percee.h"
 
 ACombatantFencer::ACombatantFencer()
 {
@@ -95,4 +103,55 @@ void ACombatantFencer::OnTurnEnd_Implementation()
     }
 
     Super::OnTurnEnd_Implementation();
+}
+
+// -----------------------------------------------------------------------------
+//  Skill tree (C++-defined — no editor data asset required)
+// -----------------------------------------------------------------------------
+
+void ACombatantFencer::PopulateDefaultSkillTree(USkillTreeDataAsset* OutTree) const
+{
+    if (!OutTree) { return; }
+
+    auto AddNode = [OutTree](FName Id, const FString& Name, const FString& Desc,
+                             TSubclassOf<UCombatAbility> Ability, int32 Cost,
+                             const TArray<FName>& Prereqs, int32 Col, int32 Row)
+    {
+        FSkillNode Node;
+        Node.NodeId        = Id;
+        Node.DisplayName   = FText::FromString(Name);
+        Node.Description   = FText::FromString(Desc);
+        Node.AbilityClass  = Ability;
+        Node.SkillCoinCost = Cost;
+        Node.Prerequisites = Prereqs;
+        Node.GridPos       = FIntPoint(Col, Row);
+        OutTree->Nodes.Add(Node);
+    };
+
+    // Column 0 — roots (no prerequisites).
+    AddNode("OffensiveSwitch", TEXT("Offensive Switch"),
+            TEXT("Strike + Fragile, enter Offensive stance."),
+            UAbility_OffensiveSwitch::StaticClass(), 1, {}, 0, 0);
+    AddNode("Spark", TEXT("Spark"),
+            TEXT("Fire jab that lays Burn, enter Defensive stance."),
+            UAbility_Spark::StaticClass(), 1, {}, 0, 2);
+
+    // Column 1 — branch off the roots.
+    AddNode("FencersFlurry", TEXT("Fencer's Flurry"),
+            TEXT("Physical hit that applies Fragile."),
+            UAbility_FencersFlurry::StaticClass(), 2, { "OffensiveSwitch" }, 1, 0);
+    AddNode("GuardDown", TEXT("Guard Down"),
+            TEXT("Apply Fragile to ALL enemies."),
+            UAbility_GuardDown::StaticClass(), 2, { "OffensiveSwitch" }, 1, 1);
+    AddNode("RainOfFire", TEXT("Rain of Fire"),
+            TEXT("Two Fire hits stacking Burn (more in Defensive)."),
+            UAbility_RainOfFire::StaticClass(), 2, { "Spark" }, 1, 2);
+
+    // Column 2 — capstones.
+    AddNode("Percee", TEXT("Percee"),
+            TEXT("Strong strike, bonus vs Fragile targets."),
+            UAbility_Percee::StaticClass(), 2, { "FencersFlurry" }, 2, 0);
+    AddNode("Combustion", TEXT("Combustion"),
+            TEXT("Detonate all Burn on the target for big Fire damage."),
+            UAbility_Combustion::StaticClass(), 3, { "RainOfFire" }, 2, 2);
 }

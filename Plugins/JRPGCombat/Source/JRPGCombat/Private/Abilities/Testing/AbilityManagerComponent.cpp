@@ -1,6 +1,7 @@
 #include "Components/AbilityManagerComponent.h"
 #include "Abilities/CombatAbility.h"
 #include "Characters/Base/CombatantBase.h"
+#include "Characters/Player/PlayerCombatant.h"
 #include "Engine/Engine.h"
 
 UAbilityManagerComponent::UAbilityManagerComponent()
@@ -16,7 +17,23 @@ void UAbilityManagerComponent::InitializeAbilities(ACombatantBase* OwningCombata
 {
     Abilities.Empty();
 
-    for (const TSubclassOf<UCombatAbility>& AbilityClass : AbilityClasses)
+    // Baseline kit authored on the actor/BP — always available.
+    TArray<TSubclassOf<UCombatAbility>> ClassesToBuild = AbilityClasses;
+
+    // Skill-tree loadout: a player merges in its currently EQUIPPED skills
+    // (up to MaxEquippedSkills). AddUnique guards against a tree node
+    // duplicating a baseline ability.
+    if (const APlayerCombatant* Player = Cast<APlayerCombatant>(OwningCombatant))
+    {
+        TArray<TSubclassOf<UCombatAbility>> Equipped;
+        Player->GetEquippedAbilityClasses(Equipped);
+        for (const TSubclassOf<UCombatAbility>& Cls : Equipped)
+        {
+            ClassesToBuild.AddUnique(Cls);
+        }
+    }
+
+    for (const TSubclassOf<UCombatAbility>& AbilityClass : ClassesToBuild)
     {
         if (!AbilityClass) { continue; }
 

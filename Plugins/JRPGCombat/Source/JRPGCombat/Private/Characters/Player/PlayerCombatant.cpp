@@ -75,3 +75,63 @@ void APlayerCombatant::LevelUp()
         TEXT("[XP] %s LEVELED UP to %d! (+5 MaxHP, +1 Atk/Def/Spd, +2 Skill, +3 Stat coins)"),
         *Name, Level);
 }
+
+// -----------------------------------------------------------------------------
+//  Stat shop
+// -----------------------------------------------------------------------------
+
+int32 APlayerCombatant::GetUpgradeCost(EUpgradeStat /*Stat*/) const
+{
+    return 1;   // flat cost for now; tune per-stat here later
+}
+
+float APlayerCombatant::GetUpgradeAmount(EUpgradeStat Stat) const
+{
+    switch (Stat)
+    {
+        case EUpgradeStat::MaxHP:   return 10.f;
+        case EUpgradeStat::Attack:  return 2.f;
+        case EUpgradeStat::Defense: return 2.f;
+        case EUpgradeStat::Speed:   return 1.f;
+        default:                    return 0.f;
+    }
+}
+
+float APlayerCombatant::GetStatValue(EUpgradeStat Stat) const
+{
+    switch (Stat)
+    {
+        case EUpgradeStat::MaxHP:   return BaseStats.MaxHP;
+        case EUpgradeStat::Attack:  return BaseStats.Attack;
+        case EUpgradeStat::Defense: return BaseStats.Defense;
+        case EUpgradeStat::Speed:   return BaseStats.Speed;
+        default:                    return 0.f;
+    }
+}
+
+bool APlayerCombatant::TryUpgradeStat(EUpgradeStat Stat)
+{
+    const int32 Cost = GetUpgradeCost(Stat);
+    if (StatCoins < Cost) { return false; }
+
+    StatCoins -= Cost;
+    const float Amount = GetUpgradeAmount(Stat);
+
+    switch (Stat)
+    {
+        case EUpgradeStat::MaxHP:   BaseStats.MaxHP   += Amount; break;
+        case EUpgradeStat::Attack:  BaseStats.Attack  += Amount; break;
+        case EUpgradeStat::Defense: BaseStats.Defense += Amount; break;
+        case EUpgradeStat::Speed:   BaseStats.Speed   += Amount; break;
+        default: break;
+    }
+
+    // Re-apply BaseStats so a MaxHP raise lifts the live HP cap immediately
+    // (InitializeForBattle is HP-persistent; current HP carries over).
+    if (Stat == EUpgradeStat::MaxHP)
+    {
+        InitializeForBattle();
+    }
+
+    return true;
+}

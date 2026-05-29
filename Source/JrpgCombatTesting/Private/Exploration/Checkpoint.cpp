@@ -156,7 +156,7 @@ void ACheckpoint::Rest(APawn* Resting)
 void ACheckpoint::DrawInteractPrompt()
 {
     const FVector Base = GetActorLocation() + FVector(0.f, 0.f, 120.f);
-    DrawDebugString(GetWorld(), Base, TEXT("[E] Rest"),
+    DrawDebugString(GetWorld(), Base, TEXT("[E] Rest    [K] Stat Shop"),
                     nullptr, FColor::Green, 0.f, true, 1.2f);
     DrawDebugCircle(GetWorld(), GetActorLocation(), InteractRadius, 32,
                     FColor::Green, false, -1.f, 0, 2.f,

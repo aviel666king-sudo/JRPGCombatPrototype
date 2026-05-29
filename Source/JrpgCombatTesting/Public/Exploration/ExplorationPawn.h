@@ -98,6 +98,16 @@ public:
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Input")
     TObjectPtr<UInputAction> PartyPanelAction;
 
+    /** K to open the stat shop — only while standing at a checkpoint. Press
+     *  again to close. Direct-key fallback to K. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Input")
+    TObjectPtr<UInputAction> ShopAction;
+
+    /** Widget class for the stat shop overlay. Defaults to the C++ class
+     *  (UStatShopWidget builds its own layout, no WBP needed). */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|UI")
+    TSubclassOf<class UStatShopWidget> StatShopClass;
+
     // -------------------------------------------------------------------------
     //  Gun — tunables
     // -------------------------------------------------------------------------
@@ -256,6 +266,11 @@ protected:
     void HandlePartyPanelOpen();
     void HandlePartyPanelClose();
 
+    /** Toggle the stat shop. Opens only when a checkpoint is in range. */
+    void HandleToggleShop();
+    void OpenStatShop();
+    void CloseStatShop();
+
     /** Helper: line trace forward from the camera. Returns the encounter hit, if any. */
     class AEnemyEncounter* TraceForEncounter() const;
 
@@ -284,7 +299,11 @@ protected:
     bool  bIsCastingCone    = false;
     bool  bIsCrouching      = false;
     bool  bPartyPanelOpen   = false;
+    bool  bShopOpen         = false;
     float CooldownRemaining = 0.f;
+
+    UPROPERTY()
+    TObjectPtr<class UStatShopWidget> StatShopWidget;
 
     bool  bIsAssassinating     = false;
     float AssassinationElapsed = 0.f;

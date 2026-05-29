@@ -11,6 +11,16 @@ class UCharacterChipDataAsset;
 class UCharacterWeaponDataAsset;
 class UCharacterArmorDataAsset;
 
+/** Stats the stat-shop can permanently upgrade with StatCoins. */
+UENUM(BlueprintType)
+enum class EUpgradeStat : uint8
+{
+    MaxHP    UMETA(DisplayName = "Max HP"),
+    Attack   UMETA(DisplayName = "Attack"),
+    Defense  UMETA(DisplayName = "Defense"),
+    Speed    UMETA(DisplayName = "Speed"),
+};
+
 /**
  * APlayerCombatant
  *
@@ -102,6 +112,28 @@ public:
      *  BaseStats and propagates at the next InitializeForBattle. */
     UFUNCTION(BlueprintCallable, Category = "Character|Progression")
     void GrantXP(int32 Amount);
+
+    // -------------------------------------------------------------------------
+    //  Stat shop — spend StatCoins on permanent BaseStats upgrades. Read by
+    //  UStatShopWidget (opened at checkpoints).
+    // -------------------------------------------------------------------------
+
+    /** StatCoin cost of one upgrade of this stat. Flat 1 for now. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Character|StatShop")
+    int32 GetUpgradeCost(EUpgradeStat Stat) const;
+
+    /** How much one purchase adds to the stat (+10 HP, +2 Atk/Def, +1 Spd). */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Character|StatShop")
+    float GetUpgradeAmount(EUpgradeStat Stat) const;
+
+    /** Current BaseStats value for the given stat (for shop display). */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Character|StatShop")
+    float GetStatValue(EUpgradeStat Stat) const;
+
+    /** Spend StatCoins to permanently raise the stat. Returns false if the
+     *  player can't afford it. MaxHP upgrades refresh the HP cap immediately. */
+    UFUNCTION(BlueprintCallable, Category = "Character|StatShop")
+    bool TryUpgradeStat(EUpgradeStat Stat);
 
 protected:
 

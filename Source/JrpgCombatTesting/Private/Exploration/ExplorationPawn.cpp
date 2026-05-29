@@ -20,6 +20,7 @@
 #include "EngineUtils.h"  // TActorIterator
 #include "Exploration/JrpgGameMode.h"
 #include "Exploration/EnemyDetectionComponent.h"
+#include "UI/StatShopWidget.h"
 #include "Kismet/GameplayStatics.h"
 
 AExplorationPawn::AExplorationPawn()
@@ -188,6 +189,10 @@ void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
             EIC->BindAction(PartyPanelAction, ETriggerEvent::Started,   this, &AExplorationPawn::HandlePartyPanelOpen);
             EIC->BindAction(PartyPanelAction, ETriggerEvent::Completed, this, &AExplorationPawn::HandlePartyPanelClose);
         }
+        if (ShopAction)
+        {
+            EIC->BindAction(ShopAction, ETriggerEvent::Started, this, &AExplorationPawn::HandleToggleShop);
+        }
     }
 
     // Direct-key fallback for crouch — binds the C key on the raw input
@@ -232,6 +237,13 @@ void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
         PlayerInputComponent->BindKey(EKeys::Tab, IE_Pressed,  this, &AExplorationPawn::HandlePartyPanelOpen);
         PlayerInputComponent->BindKey(EKeys::Tab, IE_Released, this, &AExplorationPawn::HandlePartyPanelClose);
         UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Party panel bound to Tab key via direct fallback (no IA_PartyPanel assigned)"));
+    }
+
+    // K-key fallback for the stat shop (toggle; opens only at a checkpoint).
+    if (PlayerInputComponent && !ShopAction)
+    {
+        PlayerInputComponent->BindKey(EKeys::K, IE_Pressed, this, &AExplorationPawn::HandleToggleShop);
+        UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Stat shop bound to K key via direct fallback (no IA_Shop assigned)"));
     }
 }
 
@@ -638,6 +650,73 @@ void AExplorationPawn::HandleInteract()
 }
 
 // -----------------------------------------------------------------------------
+//  Stat shop (opened at checkpoints)
+// -----------------------------------------------------------------------------
+
+void AExplorationPawn::HandleToggleShop()
+{
+    if (bShopOpen) { CloseStatShop(); }
+    else           { OpenStatShop(); }
+}
+
+void AExplorationPawn::OpenStatShop()
+{
+    if (bShopOpen || bIsAssassinating || bIsCastingCone) { return; }
+
+    UWorld* World = GetWorld();
+    if (!World) { return; }
+
+    // Gate: only at a checkpoint.
+    bool bAtCheckpoint = false;
+    for (TActorIterator<ACheckpoint> It(World); It; ++It)
+    {
+        if (*It && (*It)->IsPlayerInRange()) { bAtCheckpoint = true; break; }
+    }
+    if (!bAtCheckpoint)
+    {
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Yellow,
+                TEXT("Rest at a checkpoint to access the stat shop"));
+        }
+        return;
+    }
+
+    APlayerController* PC = Cast<APlayerController>(GetController());
+    if (!PC) { return; }
+
+    UClass* WidgetClass = StatShopClass ? StatShopClass.Get() : UStatShopWidget::StaticClass();
+    StatShopWidget = CreateWidget<UStatShopWidget>(PC, WidgetClass);
+    if (!StatShopWidget) { return; }
+
+    StatShopWidget->OnCloseRequested = [this]() { CloseStatShop(); };
+    StatShopWidget->AddToViewport(50);
+    bShopOpen = true;
+
+    PC->SetShowMouseCursor(true);
+    FInputModeUIOnly Mode;
+    Mode.SetWidgetToFocus(StatShopWidget->TakeWidget());
+    Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+    PC->SetInputMode(Mode);
+}
+
+void AExplorationPawn::CloseStatShop()
+{
+    if (StatShopWidget)
+    {
+        StatShopWidget->RemoveFromParent();
+        StatShopWidget = nullptr;
+    }
+    bShopOpen = false;
+
+    if (APlayerController* PC = Cast<APlayerController>(GetController()))
+    {
+        PC->SetShowMouseCursor(false);
+        PC->SetInputMode(FInputModeGameOnly());
+    }
+}
+
+// -----------------------------------------------------------------------------
 //  Healing protocol use (overworld)
 // -----------------------------------------------------------------------------
 
@@ -733,6 +812,7 @@ void AExplorationPawn::HandleMove(const FInputActionValue& Value)
     // Cone-shot cast and assassination channel both lock the character in place.
     if (bIsCastingCone)    { return; }
     if (bIsAssassinating)  { return; }
+    if (bShopOpen)         { return; }   // frozen while the stat shop is open
 
     const FVector2D Axis = Value.Get<FVector2D>();
     if (!Controller || Axis.IsNearlyZero()) { return; }

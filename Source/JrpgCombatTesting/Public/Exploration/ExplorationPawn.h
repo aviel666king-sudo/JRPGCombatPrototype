@@ -93,6 +93,11 @@ public:
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Input")
     TObjectPtr<UInputAction> HealAction;
 
+    /** Hold Tab to open the party panel (HP bars + protocol charges). Heal (H)
+     *  only works while this is open. Direct-key fallback to Tab. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Input")
+    TObjectPtr<UInputAction> PartyPanelAction;
+
     // -------------------------------------------------------------------------
     //  Gun — tunables
     // -------------------------------------------------------------------------
@@ -170,6 +175,11 @@ public:
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Exploration|Stealth")
     bool IsCrouching() const { return bIsCrouching; }
 
+    /** True while the player holds Tab. The HUD binds the party-panel
+     *  Visibility to this, and HandleHeal refuses unless it's open. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Exploration|UI")
+    bool IsPartyPanelOpen() const { return bPartyPanelOpen; }
+
     // -------------------------------------------------------------------------
     //  Assassination — channeled
     // -------------------------------------------------------------------------
@@ -243,6 +253,8 @@ protected:
     void HandleAssassinate();
     void HandleInteract();
     void HandleHeal();
+    void HandlePartyPanelOpen();
+    void HandlePartyPanelClose();
 
     /** Helper: line trace forward from the camera. Returns the encounter hit, if any. */
     class AEnemyEncounter* TraceForEncounter() const;
@@ -271,6 +283,7 @@ protected:
     bool  bIsAiming         = false;
     bool  bIsCastingCone    = false;
     bool  bIsCrouching      = false;
+    bool  bPartyPanelOpen   = false;
     float CooldownRemaining = 0.f;
 
     bool  bIsAssassinating     = false;

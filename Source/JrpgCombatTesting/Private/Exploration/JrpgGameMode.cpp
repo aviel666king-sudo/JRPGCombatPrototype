@@ -461,6 +461,19 @@ bool AJrpgGameMode::UseHealingProtocolOverworld()
     return true;
 }
 
+void AJrpgGameMode::SetPlayerParty(const TArray<ACombatantBase*>& InParty)
+{
+    PlayerParty = InParty;
+
+    // Populate each member's HP/AP resource pools up front so the overworld HUD
+    // shows real values (full HP) before the first battle. InitializeForBattle
+    // is HP-persistent, so this is safe to call here and again at battle start.
+    for (ACombatantBase* Member : PlayerParty)
+    {
+        if (Member) { Member->InitializeForBattle(); }
+    }
+}
+
 // -----------------------------------------------------------------------------
 //  HUD data getters
 // -----------------------------------------------------------------------------

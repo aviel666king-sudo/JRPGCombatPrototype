@@ -52,7 +52,7 @@ public:
     void SetBattleManager(ABattleManager* InBattleManager) { BattleManager = InBattleManager; }
 
     UFUNCTION(BlueprintCallable, Category = "JRPG|Setup")
-    void SetPlayerParty(const TArray<ACombatantBase*>& InParty) { PlayerParty = InParty; }
+    void SetPlayerParty(const TArray<ACombatantBase*>& InParty);
 
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "JRPG|Setup")
     ABattleManager* GetBattleManager() const { return BattleManager; }

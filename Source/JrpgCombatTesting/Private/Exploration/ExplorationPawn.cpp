@@ -13,6 +13,7 @@
 #include "InputCoreTypes.h"  // EKeys for the C-key direct fallback
 #include "Blueprint/UserWidget.h"
 #include "Engine/World.h"
+#include "Engine/Engine.h"  // GEngine for on-screen heal hint
 #include "TimerManager.h"
 #include "Engine/OverlapResult.h"
 #include "DrawDebugHelpers.h"
@@ -182,6 +183,11 @@ void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
         {
             EIC->BindAction(HealAction, ETriggerEvent::Started, this, &AExplorationPawn::HandleHeal);
         }
+        if (PartyPanelAction)
+        {
+            EIC->BindAction(PartyPanelAction, ETriggerEvent::Started,   this, &AExplorationPawn::HandlePartyPanelOpen);
+            EIC->BindAction(PartyPanelAction, ETriggerEvent::Completed, this, &AExplorationPawn::HandlePartyPanelClose);
+        }
     }
 
     // Direct-key fallback for crouch — binds the C key on the raw input
@@ -218,6 +224,14 @@ void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
     {
         PlayerInputComponent->BindKey(EKeys::H, IE_Pressed, this, &AExplorationPawn::HandleHeal);
         UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Heal bound to H key via direct fallback (no IA_Heal assigned)"));
+    }
+
+    // Tab-key fallback for the party panel (hold to open).
+    if (PlayerInputComponent && !PartyPanelAction)
+    {
+        PlayerInputComponent->BindKey(EKeys::Tab, IE_Pressed,  this, &AExplorationPawn::HandlePartyPanelOpen);
+        PlayerInputComponent->BindKey(EKeys::Tab, IE_Released, this, &AExplorationPawn::HandlePartyPanelClose);
+        UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Party panel bound to Tab key via direct fallback (no IA_PartyPanel assigned)"));
     }
 }
 
@@ -631,10 +645,31 @@ void AExplorationPawn::HandleHeal()
 {
     if (bIsAssassinating || bIsCastingCone) { return; }
 
+    // Heal only works while the party panel is open (hold Tab).
+    if (!bPartyPanelOpen)
+    {
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Yellow,
+                TEXT("Hold Tab to open the party panel, then press H to heal"));
+        }
+        return;
+    }
+
     if (AJrpgGameMode* GM = Cast<AJrpgGameMode>(UGameplayStatics::GetGameMode(this)))
     {
         GM->UseHealingProtocolOverworld();
     }
+}
+
+void AExplorationPawn::HandlePartyPanelOpen()
+{
+    bPartyPanelOpen = true;
+}
+
+void AExplorationPawn::HandlePartyPanelClose()
+{
+    bPartyPanelOpen = false;
 }
 
 void AExplorationPawn::GatherEncountersInCone(TArray<AEnemyEncounter*>& Out) const

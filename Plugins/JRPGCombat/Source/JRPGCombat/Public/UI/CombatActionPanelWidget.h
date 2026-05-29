@@ -12,6 +12,7 @@ class UWidgetSwitcher;
 class UTextBlock;
 class UButton;
 class UVerticalBox;
+class UHorizontalBox;
 class UCombatHUDWidget;         // forward declare (avoid circular include)
 
 /**
@@ -133,9 +134,10 @@ public:
     UPROPERTY(meta = (BindWidgetOptional))
     TObjectPtr<UButton> BackButtonSkill;
 
-    /** Populated at runtime with one button per Skill-category ability. */
+    /** Populated at runtime with one button per Skill-category ability.
+     *  Horizontal row so a full 6-skill loadout never overflows vertically. */
     UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UVerticalBox> SkillListBox;
+    TObjectPtr<UHorizontalBox> SkillListBox;
 
     // ── Protocol submenu ──────────────────────────────────────────────────────
     UPROPERTY(meta = (BindWidgetOptional))
@@ -328,6 +330,7 @@ private:
     UFUNCTION() void OnSkillSlot2Clicked() { OnSkillButtonClicked(2); }
     UFUNCTION() void OnSkillSlot3Clicked() { OnSkillButtonClicked(3); }
     UFUNCTION() void OnSkillSlot4Clicked() { OnSkillButtonClicked(4); }
+    UFUNCTION() void OnSkillSlot5Clicked() { OnSkillButtonClicked(5); }
 
     // Dispatches the click for the given slot index into the skill list.
     void OnSkillButtonClicked(int32 SlotIndex);
@@ -336,6 +339,10 @@ private:
 
     /** Apply the correct WidgetSwitcher index for CurrentState. */
     void ApplySwitcherIndex();
+
+    /** Builds the entire action-panel layout in C++ and assigns the bound
+     *  members, so no WBP layout is needed (empty the WBP and reparent). */
+    void BuildPanelLayout();
 
 public:
     /** Enable/disable main-menu buttons based on what the acting character can do. */

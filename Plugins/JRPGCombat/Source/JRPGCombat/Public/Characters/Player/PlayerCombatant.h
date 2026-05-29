@@ -209,6 +209,10 @@ protected:
      *  no SkillTree asset was assigned in the editor. Base does nothing. */
     virtual void PopulateDefaultSkillTree(USkillTreeDataAsset* OutTree) const {}
 
+    /** Subclasses list node ids the character begins a run with (unlocked +
+     *  auto-equipped). Base does nothing. */
+    virtual void GetStartingSkillNodes(TArray<FName>& Out) const {}
+
     /** Set of unlocked skill-tree node ids. Persists on the runtime actor. */
     UPROPERTY(BlueprintReadOnly, Category = "Character|SkillTree")
     TSet<FName> UnlockedNodes;

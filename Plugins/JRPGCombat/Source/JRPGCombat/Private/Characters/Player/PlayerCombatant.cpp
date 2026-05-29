@@ -158,6 +158,18 @@ void APlayerCombatant::BeginPlay()
         SkillTree = NewObject<USkillTreeDataAsset>(this);
         PopulateDefaultSkillTree(SkillTree);
     }
+
+    // Grant the character's starting skills (unlocked + auto-equipped).
+    TArray<FName> StartingNodes;
+    GetStartingSkillNodes(StartingNodes);
+    for (const FName& NodeId : StartingNodes)
+    {
+        if (SkillTree && SkillTree->FindNode(NodeId))
+        {
+            UnlockedNodes.Add(NodeId);
+            if (CanEquipMore()) { EquippedNodes.AddUnique(NodeId); }
+        }
+    }
 }
 
 bool APlayerCombatant::ArePrerequisitesMet(FName NodeId) const

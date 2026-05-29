@@ -11,6 +11,13 @@
 #include "Components/Button.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
+#include "Components/HorizontalBox.h"
+#include "Components/HorizontalBoxSlot.h"
+#include "Components/Border.h"
+#include "Components/PanelWidget.h"
+#include "Components/ContentWidget.h"
+#include "Blueprint/WidgetTree.h"
+#include "Styling/CoreStyle.h"
 #include "InputCoreTypes.h"
 
 // -----------------------------------------------------------------------------
@@ -20,6 +27,10 @@
 void UCombatActionPanelWidget::NativeConstruct()
 {
     Super::NativeConstruct();
+
+    // Build the panel layout in C++ and assign the bound members before the
+    // click bindings below run on them.
+    BuildPanelLayout();
 
     // ── Bind main-menu buttons ────────────────────────────────────────────────
     if (MeleeButton)    { MeleeButton->OnClicked.AddDynamic(this,    &UCombatActionPanelWidget::OnMeleeClicked); }
@@ -43,6 +54,150 @@ void UCombatActionPanelWidget::NativeConstruct()
 
     // Start inactive until a player turn begins.
     SetMenuState(ECombatMenuState::Inactive);
+}
+
+// -----------------------------------------------------------------------------
+//  Layout (built in C++ — no WBP layout needed)
+// -----------------------------------------------------------------------------
+
+void UCombatActionPanelWidget::BuildPanelLayout()
+{
+    if (!WidgetTree) { return; }
+
+    auto MakeFont = [](int32 Size, bool bBold)
+    {
+        return FCoreStyle::GetDefaultFontStyle(bBold ? "Bold" : "Regular", Size);
+    };
+
+    const FLinearColor BtnBG (0.16f, 0.18f, 0.26f, 1.f);
+    const FLinearColor NameCol(0.97f, 0.97f, 1.f, 1.f);
+    const FLinearColor KeyCol (1.f, 0.82f, 0.30f, 1.f);   // yellow hotkeys
+
+    // Builds a button whose content is [Name] over an optional [hotkey] line.
+    auto MakeButton = [&](const FString& Name, const FString& Hotkey,
+                          TObjectPtr<UTextBlock>* OutSubText = nullptr) -> UButton*
+    {
+        UButton* B = WidgetTree->ConstructWidget<UButton>();
+        B->SetBackgroundColor(BtnBG);
+
+        UVerticalBox* V = WidgetTree->ConstructWidget<UVerticalBox>();
+
+        UTextBlock* NameTxt = WidgetTree->ConstructWidget<UTextBlock>();
+        NameTxt->SetText(FText::FromString(Name));
+        NameTxt->SetFont(MakeFont(15, true));
+        NameTxt->SetColorAndOpacity(NameCol);
+        NameTxt->SetJustification(ETextJustify::Center);
+        V->AddChildToVerticalBox(NameTxt);
+
+        if (!Hotkey.IsEmpty() || OutSubText)
+        {
+            UTextBlock* Sub = WidgetTree->ConstructWidget<UTextBlock>();
+            Sub->SetText(FText::FromString(Hotkey));
+            Sub->SetFont(MakeFont(11, true));
+            Sub->SetColorAndOpacity(KeyCol);
+            Sub->SetJustification(ETextJustify::Center);
+            V->AddChildToVerticalBox(Sub);
+            if (OutSubText) { *OutSubText = Sub; }
+        }
+
+        B->SetContent(V);
+        return B;
+    };
+
+    MenuSwitcher = WidgetTree->ConstructWidget<UWidgetSwitcher>();
+
+    // ── Slot 0: Main menu — 5 buttons in a row ────────────────────────────────
+    {
+        UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
+        auto AddMain = [&](UButton* B)
+        {
+            UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(B);
+            S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+            S->SetPadding(FMargin(4.f, 0.f));
+        };
+        MeleeButton    = MakeButton(TEXT("Melee"),    TEXT("[1]"));        AddMain(MeleeButton);
+        GunButton      = MakeButton(TEXT("Gun"),      TEXT("[RMB to Aim]")); AddMain(GunButton);
+        SkillButton    = MakeButton(TEXT("Skill"),    TEXT("[3]"));        AddMain(SkillButton);
+        ProtocolButton = MakeButton(TEXT("Protocol"), TEXT("[4]"));        AddMain(ProtocolButton);
+        SkipTurnButton = MakeButton(TEXT("Skip Turn"),TEXT("[T]"));        AddMain(SkipTurnButton);
+        MenuSwitcher->AddChild(Row);
+    }
+
+    // ── Slot 1: Skill menu — Back + horizontal skill row ──────────────────────
+    {
+        UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
+
+        BackButtonSkill = MakeButton(TEXT("Back"), TEXT("[Backspace]"));
+        UHorizontalBoxSlot* BS = Row->AddChildToHorizontalBox(BackButtonSkill);
+        BS->SetPadding(FMargin(4.f, 0.f, 12.f, 0.f));
+
+        SkillListBox = WidgetTree->ConstructWidget<UHorizontalBox>();
+        UHorizontalBoxSlot* LS = Row->AddChildToHorizontalBox(SkillListBox);
+        LS->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+
+        MenuSwitcher->AddChild(Row);
+    }
+
+    // ── Slot 2: Protocol menu — Back + 3 protocols (name + charges) ───────────
+    {
+        UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
+        auto AddProto = [&](UButton* B)
+        {
+            UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(B);
+            S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+            S->SetPadding(FMargin(4.f, 0.f));
+        };
+
+        BackButtonProtocol = MakeButton(TEXT("Back"), TEXT("[Backspace]"));
+        UHorizontalBoxSlot* BS = Row->AddChildToHorizontalBox(BackButtonProtocol);
+        BS->SetPadding(FMargin(4.f, 0.f, 12.f, 0.f));
+
+        HealingButton = MakeButton(TEXT("Healing [1]"), FString(), &HealingChargesText); AddProto(HealingButton);
+        RevivalButton = MakeButton(TEXT("Revival [2]"), FString(), &RevivalChargesText); AddProto(RevivalButton);
+        APButton      = MakeButton(TEXT("AP [3]"),      FString(), &APChargesText);      AddProto(APButton);
+
+        MenuSwitcher->AddChild(Row);
+    }
+
+    // ── Slot 3: Target selection — hint + Cancel ──────────────────────────────
+    {
+        UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
+
+        TargetHintText = WidgetTree->ConstructWidget<UTextBlock>();
+        TargetHintText->SetText(FText::FromString(TEXT("Select Target  —  A / D  •  Space confirm  •  Backspace cancel")));
+        TargetHintText->SetFont(MakeFont(14, true));
+        TargetHintText->SetColorAndOpacity(NameCol);
+        UHorizontalBoxSlot* HS = Row->AddChildToHorizontalBox(TargetHintText);
+        HS->SetVerticalAlignment(VAlign_Center);
+        HS->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+
+        BackButtonTarget = MakeButton(TEXT("Cancel"), TEXT("[Backspace]"));
+        Row->AddChildToHorizontalBox(BackButtonTarget);
+
+        MenuSwitcher->AddChild(Row);
+    }
+
+    // Dark panel background wrapping the switcher.
+    UBorder* Bg = WidgetTree->ConstructWidget<UBorder>();
+    Bg->SetBrushColor(FLinearColor(0.04f, 0.05f, 0.08f, 0.92f));
+    Bg->SetPadding(FMargin(14.f, 10.f));
+    Bg->SetContent(MenuSwitcher);
+
+    // Attach to the widget root (replace whatever the WBP had).
+    UWidget* Root = GetRootWidget();
+    if (UPanelWidget* P = Cast<UPanelWidget>(Root))
+    {
+        P->ClearChildren();
+        P->AddChild(Bg);
+    }
+    else if (UContentWidget* CW = Cast<UContentWidget>(Root))
+    {
+        CW->SetContent(Bg);
+    }
+    else
+    {
+        WidgetTree->RootWidget = Bg;
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -188,9 +343,9 @@ bool UCombatActionPanelWidget::HandleKeyDown(const FKey& Key)
         // ── Skill submenu ─────────────────────────────────────────────────────
         case ECombatMenuState::SkillMenu:
         {
-            // Z / X / C / V / B select skills 1–5.
+            // Z / X / C / V / B / N select skills 1–6.
             const TArray<FKey> SkillKeys = {
-                EKeys::Z, EKeys::X, EKeys::C, EKeys::V, EKeys::B
+                EKeys::Z, EKeys::X, EKeys::C, EKeys::V, EKeys::B, EKeys::N
             };
             for (int32 i = 0; i < SkillKeys.Num(); ++i)
             {
@@ -364,10 +519,14 @@ void UCombatActionPanelWidget::RefreshSkillMenu()
             *Ability->DisplayName.ToString(),
             *APCostStr);
 
-        // Create a Button with a TextBlock child.
+        // Create a Button with a centered, wrapping TextBlock child.
         UButton* Btn = NewObject<UButton>(this);
+        Btn->SetBackgroundColor(FLinearColor(0.16f, 0.18f, 0.26f, 1.f));
         UTextBlock* Label = NewObject<UTextBlock>(this);
         Label->SetText(FText::FromString(LabelStr));
+        Label->SetFont(FCoreStyle::GetDefaultFontStyle("Bold", 12));
+        Label->SetJustification(ETextJustify::Center);
+        Label->SetAutoWrapText(true);
         Label->SetColorAndOpacity(bCanUse
             ? FSlateColor(FLinearColor::White)
             : FSlateColor(FLinearColor(0.4f, 0.4f, 0.4f, 1.f)));
@@ -383,14 +542,16 @@ void UCombatActionPanelWidget::RefreshSkillMenu()
             case 2: Btn->OnClicked.AddDynamic(this, &UCombatActionPanelWidget::OnSkillSlot2Clicked); break;
             case 3: Btn->OnClicked.AddDynamic(this, &UCombatActionPanelWidget::OnSkillSlot3Clicked); break;
             case 4: Btn->OnClicked.AddDynamic(this, &UCombatActionPanelWidget::OnSkillSlot4Clicked); break;
+            case 5: Btn->OnClicked.AddDynamic(this, &UCombatActionPanelWidget::OnSkillSlot5Clicked); break;
             default: break;
         }
 
-        UVerticalBoxSlot* VSlot = SkillListBox->AddChildToVerticalBox(Btn);
-        if (VSlot)
+        UHorizontalBoxSlot* HSlot = SkillListBox->AddChildToHorizontalBox(Btn);
+        if (HSlot)
         {
-            VSlot->SetPadding(FMargin(0.f, 2.f, 0.f, 2.f));
-            VSlot->SetHorizontalAlignment(HAlign_Fill);
+            HSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+            HSlot->SetPadding(FMargin(3.f, 0.f));
+            HSlot->SetVerticalAlignment(VAlign_Fill);
         }
     }
 }

@@ -98,6 +98,9 @@ public:
     // Builds the fencer's branching skill tree in C++ (no editor asset needed).
     virtual void PopulateDefaultSkillTree(USkillTreeDataAsset* OutTree) const override;
 
+    // The fencer starts a run with her two weakest (root) skills.
+    virtual void GetStartingSkillNodes(TArray<FName>& Out) const override;
+
 private:
 
     // Set to true whenever SetStance() makes a real change this turn.

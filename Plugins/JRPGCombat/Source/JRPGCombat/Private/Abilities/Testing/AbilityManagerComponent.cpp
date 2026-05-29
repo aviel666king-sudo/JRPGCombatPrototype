@@ -17,13 +17,31 @@ void UAbilityManagerComponent::InitializeAbilities(ACombatantBase* OwningCombata
 {
     Abilities.Empty();
 
-    // Baseline kit authored on the actor/BP — always available.
-    TArray<TSubclassOf<UCombatAbility>> ClassesToBuild = AbilityClasses;
+    // A player whose character has a skill tree is "tree-driven": their Skill-
+    // category abilities come ONLY from equipped tree nodes. Any Skill-category
+    // entries still listed in the BP's baseline AbilityClasses are ignored, so
+    // built-in skills don't leak in alongside the loadout (and don't overflow
+    // the menu). Non-skill baseline abilities (Melee, Gun, etc.) always stay.
+    const APlayerCombatant* Player = Cast<APlayerCombatant>(OwningCombatant);
+    const bool bTreeDriven = Player && Player->GetSkillTree() != nullptr;
 
-    // Skill-tree loadout: a player merges in its currently EQUIPPED skills
-    // (up to MaxEquippedSkills). AddUnique guards against a tree node
-    // duplicating a baseline ability.
-    if (const APlayerCombatant* Player = Cast<APlayerCombatant>(OwningCombatant))
+    TArray<TSubclassOf<UCombatAbility>> ClassesToBuild;
+    for (const TSubclassOf<UCombatAbility>& Cls : AbilityClasses)
+    {
+        if (!Cls) { continue; }
+        if (bTreeDriven)
+        {
+            const UCombatAbility* CDO = Cls.GetDefaultObject();
+            if (CDO && CDO->AbilityCategory == EAbilityCategory::Skill)
+            {
+                continue;   // skills are tree-only for this character
+            }
+        }
+        ClassesToBuild.AddUnique(Cls);
+    }
+
+    // Merge in the currently EQUIPPED tree skills (up to MaxEquippedSkills).
+    if (bTreeDriven)
     {
         TArray<TSubclassOf<UCombatAbility>> Equipped;
         Player->GetEquippedAbilityClasses(Equipped);

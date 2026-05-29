@@ -136,6 +136,10 @@ private:
     bool bIsTargeted    = false;
     bool bIsEnemyActing = false;
 
+    /** Builds the entire card layout in C++ and assigns the bound members, so
+     *  no WBP layout is needed (empty the WBP and reparent to this class). */
+    void BuildCardLayout();
+
     void RefreshBorderColor();
 
     FText BuildHPText()            const;

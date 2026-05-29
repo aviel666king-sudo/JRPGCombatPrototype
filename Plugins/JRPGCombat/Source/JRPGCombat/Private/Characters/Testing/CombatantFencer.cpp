@@ -155,3 +155,10 @@ void ACombatantFencer::PopulateDefaultSkillTree(USkillTreeDataAsset* OutTree) co
             TEXT("Detonate all Burn on the target for big Fire damage."),
             UAbility_Combustion::StaticClass(), 3, { "RainOfFire" }, 2, 2);
 }
+
+void ACombatantFencer::GetStartingSkillNodes(TArray<FName>& Out) const
+{
+    // The two root skills — her weakest options — come pre-unlocked.
+    Out.Add("Spark");
+    Out.Add("OffensiveSwitch");
+}

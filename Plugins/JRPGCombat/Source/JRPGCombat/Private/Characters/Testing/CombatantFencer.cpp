@@ -156,6 +156,17 @@ void ACombatantFencer::PopulateDefaultSkillTree(USkillTreeDataAsset* OutTree) co
             UAbility_Combustion::StaticClass(), 3, { "RainOfFire" }, 2, 2);
 }
 
+FText ACombatantFencer::GetCombatSubtitle() const
+{
+    switch (CurrentStance)
+    {
+        case EFencerStance::Offensive: return FText::FromString(TEXT("Offensive"));
+        case EFencerStance::Defensive: return FText::FromString(TEXT("Defensive"));
+        case EFencerStance::Virtuose:  return FText::FromString(TEXT("Virtuose"));
+        default:                       return FText::FromString(TEXT("Stanceless"));
+    }
+}
+
 void ACombatantFencer::GetStartingSkillNodes(TArray<FName>& Out) const
 {
     // The two root skills — her weakest options — come pre-unlocked.

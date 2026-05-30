@@ -72,4 +72,13 @@ public:
      */
     UFUNCTION(BlueprintCallable, Category = "Turn Info")
     void Refresh(int32 InternalTurnNumber, ACombatantBase* NextCombatant);
+
+protected:
+
+    virtual TSharedRef<SWidget> RebuildWidget() override;
+
+private:
+
+    /** Builds the two-line layout in C++ (no WBP needed). */
+    void BuildLayout();
 };

@@ -17,10 +17,20 @@
 #include "Blueprint/WidgetTree.h"
 #include "Styling/CoreStyle.h"
 
+TSharedRef<SWidget> UUnitStatusWidget::RebuildWidget()
+{
+    // Build the card into a fresh root when there's no WBP-provided layout
+    // (the HUD constructs these directly from the C++ class).
+    if (WidgetTree && !WidgetTree->RootWidget)
+    {
+        BuildCardLayout();
+    }
+    return Super::RebuildWidget();
+}
+
 void UUnitStatusWidget::NativeConstruct()
 {
     Super::NativeConstruct();
-    BuildCardLayout();
     SetIsActivePlayer(false);
     SetIsTargeted(false);
     SetIsEnemyActing(false);
@@ -307,5 +317,6 @@ FText UUnitStatusWidget::BuildStatusEffectsText() const
 
 FText UUnitStatusWidget::GetPassiveText_Implementation() const
 {
-    return FText::GetEmpty();
+    const ACombatantBase* C = Unit.Get();
+    return C ? C->GetCombatSubtitle() : FText::GetEmpty();
 }

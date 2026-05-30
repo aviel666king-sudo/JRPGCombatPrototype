@@ -72,6 +72,9 @@ public:
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Fencer|Stance")
     EFencerStance GetCurrentStance() const { return CurrentStance; }
 
+    /** Combat-card subtitle = current stance name. */
+    virtual FText GetCombatSubtitle() const override;
+
     // -------------------------------------------------------------------------
     //  Damage multiplier overrides
     // -------------------------------------------------------------------------

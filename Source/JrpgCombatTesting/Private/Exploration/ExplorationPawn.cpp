@@ -265,6 +265,14 @@ void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 
 void AExplorationPawn::HandleAimStart()
 {
+    // Block exploration aim/fire while combat owns input — otherwise RMB/LMB in
+    // combat also triggers the exploration shot trace (visible as a stray
+    // debug-line "laser" coming from the hidden exploration pawn).
+    if (AJrpgGameMode* GM = Cast<AJrpgGameMode>(UGameplayStatics::GetGameMode(this)))
+    {
+        if (GM->GetWorldMode() != EWorldMode::Exploring) { return; }
+    }
+
     bIsAiming = true;
 
     // Movement penalty — slower walk feels more deliberate while aiming.
@@ -311,6 +319,12 @@ void AExplorationPawn::HandleAimEnd()
 
 void AExplorationPawn::HandleFire()
 {
+    // Block exploration fire while combat owns input.
+    if (AJrpgGameMode* GM = Cast<AJrpgGameMode>(UGameplayStatics::GetGameMode(this)))
+    {
+        if (GM->GetWorldMode() != EWorldMode::Exploring) { return; }
+    }
+
     // Regular fire requires aim mode — this prevents accidental clicks while
     // running around. Cone shot (F) doesn't need aim because it's a quick
     // close-range interrupt that should be reachable instantly.

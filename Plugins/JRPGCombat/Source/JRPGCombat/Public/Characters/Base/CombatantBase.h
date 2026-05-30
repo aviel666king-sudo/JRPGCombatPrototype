@@ -230,6 +230,10 @@ public:
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Combatant|Resources")
     float GetAPPercent() const;
 
+    /** Optional one-line subtitle shown on the combat status card (e.g. the
+     *  Fencer's current stance). Base returns empty; subclasses override. */
+    virtual FText GetCombatSubtitle() const { return FText::GetEmpty(); }
+
     // Stat helpers
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Combatant|Stats")
     float GetBaseAttack() const { return BaseStats.Attack; }

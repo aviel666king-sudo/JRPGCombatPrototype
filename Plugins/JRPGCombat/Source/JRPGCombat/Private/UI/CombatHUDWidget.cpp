@@ -8,10 +8,107 @@
 #include "Components/AbilityManagerComponent.h"
 #include "Components/PanelWidget.h"
 #include "Components/Widget.h"
+#include "Components/CanvasPanel.h"
+#include "Components/CanvasPanelSlot.h"
+#include "Components/VerticalBox.h"
+#include "Components/VerticalBoxSlot.h"
+#include "Components/TextBlock.h"
+#include "Blueprint/WidgetTree.h"
+#include "Styling/CoreStyle.h"
 #include "GameFramework/PlayerController.h"
 #include "Framework/Application/SlateApplication.h"
 #include "InputCoreTypes.h"
 #include "Input/Events.h"
+
+// -----------------------------------------------------------------------------
+//  Layout (built in C++ — no WBP needed)
+// -----------------------------------------------------------------------------
+
+TSharedRef<SWidget> UCombatHUDWidget::RebuildWidget()
+{
+    // Only the root canvas is created here; child UserWidgets are made with
+    // CreateWidget in NativeConstruct (so their own Initialize/RebuildWidget
+    // runs and they actually render).
+    if (WidgetTree && !WidgetTree->RootWidget)
+    {
+        WidgetTree->RootWidget = WidgetTree->ConstructWidget<UCanvasPanel>();
+    }
+    return Super::RebuildWidget();
+}
+
+void UCombatHUDWidget::BuildHudLayout()
+{
+    constexpr int32 SlotsPerSide = 3;
+
+    UCanvasPanel* Root = Cast<UCanvasPanel>(GetRootWidget());
+    if (!Root || PlayerPartyPanel) { return; }   // no canvas, or already built
+
+    auto Place = [&](UWidget* W, FAnchors Anchors, FVector2D Alignment,
+                     FVector2D Position, bool bAutoSize, FVector2D Size)
+    {
+        UCanvasPanelSlot* S = Cast<UCanvasPanelSlot>(Root->AddChild(W));
+        if (!S) { return; }
+        S->SetAnchors(Anchors);
+        S->SetAlignment(Alignment);
+        S->SetPosition(Position);
+        if (bAutoSize) { S->SetAutoSize(true); }
+        else           { S->SetSize(Size); }
+    };
+
+    // Turn info — top-center.
+    TurnInfoWidget = CreateWidget<UTurnInfoWidget>(this, UTurnInfoWidget::StaticClass());
+    Place(TurnInfoWidget, FAnchors(0.5f, 0.f), FVector2D(0.5f, 0.f),
+          FVector2D(0.f, 18.f), true, FVector2D::ZeroVector);
+
+    // Enemy party — left-center (vertical stack of cards).
+    {
+        UVerticalBox* Box = WidgetTree->ConstructWidget<UVerticalBox>();
+        EnemyPartyPanel = Box;
+        for (int32 i = 0; i < SlotsPerSide; ++i)
+        {
+            UUnitStatusWidget* Card = CreateWidget<UUnitStatusWidget>(this, UUnitStatusWidget::StaticClass());
+            if (UVerticalBoxSlot* VS = Box->AddChildToVerticalBox(Card))
+            {
+                VS->SetPadding(FMargin(0.f, i == 0 ? 0.f : 8.f, 0.f, 0.f));
+            }
+        }
+        Place(Box, FAnchors(0.f, 0.5f), FVector2D(0.f, 0.5f),
+              FVector2D(24.f, 0.f), true, FVector2D::ZeroVector);
+    }
+
+    // Player party — right-center.
+    {
+        UVerticalBox* Box = WidgetTree->ConstructWidget<UVerticalBox>();
+        PlayerPartyPanel = Box;
+        for (int32 i = 0; i < SlotsPerSide; ++i)
+        {
+            UUnitStatusWidget* Card = CreateWidget<UUnitStatusWidget>(this, UUnitStatusWidget::StaticClass());
+            if (UVerticalBoxSlot* VS = Box->AddChildToVerticalBox(Card))
+            {
+                VS->SetPadding(FMargin(0.f, i == 0 ? 0.f : 8.f, 0.f, 0.f));
+            }
+        }
+        Place(Box, FAnchors(1.f, 0.5f), FVector2D(1.f, 0.5f),
+              FVector2D(-24.f, 0.f), true, FVector2D::ZeroVector);
+    }
+
+    // Action panel — bottom-center, fixed size.
+    ActionPanel = CreateWidget<UCombatActionPanelWidget>(this, UCombatActionPanelWidget::StaticClass());
+    Place(ActionPanel, FAnchors(0.5f, 1.f), FVector2D(0.5f, 1.f),
+          FVector2D(0.f, -12.f), false, FVector2D(940.f, 150.f));
+
+    // Crosshair — dead center, hidden until gun aim.
+    {
+        UTextBlock* Cross = WidgetTree->ConstructWidget<UTextBlock>();
+        Cross->SetText(FText::FromString(TEXT("+")));
+        Cross->SetFont(FCoreStyle::GetDefaultFontStyle("Bold", 28));
+        Cross->SetColorAndOpacity(FLinearColor(1.f, 1.f, 1.f, 0.85f));
+        CrosshairWidget = Cross;
+        Place(Cross, FAnchors(0.5f, 0.5f), FVector2D(0.5f, 0.5f),
+              FVector2D(0.f, 0.f), true, FVector2D::ZeroVector);
+        Cross->SetVisibility(ESlateVisibility::Collapsed);
+    }
+}
 
 // -----------------------------------------------------------------------------
 //  Lifecycle
@@ -20,6 +117,11 @@
 void UCombatHUDWidget::NativeConstruct()
 {
     Super::NativeConstruct();
+
+    // Populate the C++-built HUD (panels + spawned cards + action panel) into
+    // the root canvas created in RebuildWidget. Child UserWidgets are created
+    // here via CreateWidget so they initialize and render.
+    BuildHudLayout();
 
     // This widget must be focusable so NativeOnKeyDown fires.
     SetIsFocusable(true);
@@ -71,6 +173,11 @@ void UCombatHUDWidget::InitializeHUD(ABattleManager* InBattleManager)
     if (ActionPanel) { ActionPanel->InitializePanel(InBattleManager, this); }
 
     RebindUnits();
+
+    // Grab keyboard focus up front so A/D target navigation and the rest of
+    // NativeOnKeyDown work immediately — without this the HUD only receives
+    // key events after the user clicks something to trigger focus recapture.
+    RecaptureKeyboardFocus();
 }
 
 void UCombatHUDWidget::RebindUnits()
@@ -258,7 +365,9 @@ FReply UCombatHUDWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry,
     // ── Right mouse button — enter gun aim mode ───────────────────────────────
     if (InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton)
     {
-        if (BM && BM->GetCurrentPhase() == EBattlePhase::AwaitingInput && !bGunAimInputActive)
+        // Always (re)enter aim on RMB-down during AwaitingInput. BeginGunAimMode
+        // is idempotent, so this also recovers from any stale aim state.
+        if (BM && BM->GetCurrentPhase() == EBattlePhase::AwaitingInput)
         {
             BM->BeginGunAimMode();
         }
@@ -306,15 +415,38 @@ void UCombatHUDWidget::NativeTick(const FGeometry& AllottedGeometry, float InDel
 {
     Super::NativeTick(AllottedGeometry, InDeltaTime);
 
-    if (!bGunAimInputActive) { return; }
-
-    ABattleManager* BM = BattleManager.Get();
-    if (!BM || !BM->IsGunAimActive()) { return; }
-
     APlayerController* PC = GetOwningPlayer();
-    if (!PC) { return; }
+    ABattleManager*    BM = BattleManager.Get();
+    if (!PC || !BM) { return; }
 
-    // Use screen-space cursor position so warping works correctly in PIE.
+    // Robust RMB-aim activation: POLL the RMB key state every tick instead of
+    // relying solely on NativeOnMouseButtonDown — that event can be eaten by
+    // any child widget under the cursor (action-panel buttons, cards, etc.).
+    // Polling guarantees aim enters whenever the right phase + RMB align.
+    const bool bRMBHeld = PC->IsInputKeyDown(EKeys::RightMouseButton);
+    if (bRMBHeld && !bGunAimInputActive &&
+        BM->GetCurrentPhase() == EBattlePhase::AwaitingInput)
+    {
+        BM->BeginGunAimMode();
+    }
+    else if (!bRMBHeld && bGunAimInputActive)
+    {
+        BM->EndGunAimMode();
+    }
+
+    if (!bGunAimInputActive) { bFirePrevHeld = false; return; }
+    if (!BM->IsGunAimActive()) { bFirePrevHeld = false; return; }
+
+    // Edge-triggered LMB → fire one shot per press (the mouse-down event can be
+    // swallowed by a child widget, so we poll the key state here for reliability).
+    const bool bFireHeld = PC->IsInputKeyDown(EKeys::LeftMouseButton);
+    if (bFireHeld && !bFirePrevHeld)
+    {
+        BM->FireGunAimShot();
+        RefreshAll();
+    }
+    bFirePrevHeld = bFireHeld;
+
     if (!GEngine || !GEngine->GameViewport) { return; }
 
     FVector2D ViewportSize;
@@ -374,7 +506,8 @@ void UCombatHUDWidget::OnGunAimModeChanged(bool bAiming)
         }
     }
 
-    // Hide the OS cursor while aiming; center it so the first tick reads zero delta.
+    // Hide the OS cursor while aiming; center it so the first tick reads zero
+    // delta and subsequent deltas are clean.
     if (APlayerController* PC = GetOwningPlayer())
     {
         PC->bShowMouseCursor = !bAiming;

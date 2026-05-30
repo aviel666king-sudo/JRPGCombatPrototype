@@ -122,6 +122,7 @@ public:
 
 protected:
 
+    virtual TSharedRef<SWidget> RebuildWidget() override;
     virtual void NativeConstruct() override;
 
     UFUNCTION(BlueprintNativeEvent, Category = "Unit Status")

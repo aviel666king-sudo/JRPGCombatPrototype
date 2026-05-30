@@ -113,6 +113,7 @@ public:
 
 protected:
 
+    virtual TSharedRef<SWidget> RebuildWidget() override;
     virtual void NativeConstruct() override;
     virtual void NativeDestruct()  override;
 
@@ -145,10 +146,17 @@ private:
     /** Skip one tick after cursor reset to avoid opposite-direction oscillation. */
     bool bSkipNextAimTick = false;
 
+    /** Previous-frame LMB state — for edge-triggered fire polling in tick. */
+    bool bFirePrevHeld = false;
+
     /** Fired by BattleManager::OnGunAimChanged — shows/hides crosshair,
      *  hides cursor, centers mouse, dims the action panel. */
     UFUNCTION()
     void OnGunAimModeChanged(bool bAiming);
+
+    /** Builds the entire combat HUD layout in C++ (panels, turn-info, action
+     *  panel, crosshair) and spawns the per-side unit cards. No WBP needed. */
+    void BuildHudLayout();
 
     void CollectUnitWidgets(UPanelWidget* Panel,
                             TArray<TObjectPtr<UUnitStatusWidget>>& OutWidgets);

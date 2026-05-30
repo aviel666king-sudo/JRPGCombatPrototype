@@ -24,13 +24,20 @@
 //  Lifecycle
 // -----------------------------------------------------------------------------
 
+TSharedRef<SWidget> UCombatActionPanelWidget::RebuildWidget()
+{
+    // Build the panel into a fresh root when there's no WBP layout (the HUD
+    // constructs this directly from the C++ class).
+    if (WidgetTree && !WidgetTree->RootWidget)
+    {
+        BuildPanelLayout();
+    }
+    return Super::RebuildWidget();
+}
+
 void UCombatActionPanelWidget::NativeConstruct()
 {
     Super::NativeConstruct();
-
-    // Build the panel layout in C++ and assign the bound members before the
-    // click bindings below run on them.
-    BuildPanelLayout();
 
     // ── Bind main-menu buttons ────────────────────────────────────────────────
     if (MeleeButton)    { MeleeButton->OnClicked.AddDynamic(this,    &UCombatActionPanelWidget::OnMeleeClicked); }
@@ -227,8 +234,13 @@ void UCombatActionPanelWidget::InitializePanel(ABattleManager* InBattleManager,
 
 void UCombatActionPanelWidget::SetMenuState(ECombatMenuState NewState)
 {
-    // Track where we came from when entering target selection.
-    if (NewState == ECombatMenuState::SelectingTarget)
+    // Track where we came from when entering target selection — but only on the
+    // FIRST transition into it. BeginTargetSelection re-broadcasts a phase change
+    // that calls SetMenuState(SelectingTarget) again; without this guard that
+    // second call would overwrite PreTargetState with SelectingTarget itself,
+    // making the first Backspace a no-op (requiring two presses to back out).
+    if (NewState == ECombatMenuState::SelectingTarget
+        && CurrentState != ECombatMenuState::SelectingTarget)
     {
         PreTargetState = CurrentState;
     }

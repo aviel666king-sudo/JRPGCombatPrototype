@@ -26,6 +26,10 @@ ABattleManager::ABattleManager()
     PrimaryActorTick.bCanEverTick = false;
 
     ProtocolManager = CreateDefaultSubobject<UProtocolManagerComponent>(TEXT("ProtocolManager"));
+
+    // Default to the fully C++-built HUD so no WBP_CombatHUD asset is required.
+    // A BP can still override HUDClass if desired.
+    HUDClass = UCombatHUDWidget::StaticClass();
 }
 
 void ABattleManager::BeginPlay()
@@ -837,12 +841,18 @@ TArray<ACombatantBase*> ABattleManager::GetValidTargets(ETargetScope Scope,
 
 UCombatHUDWidget* ABattleManager::CreateAndShowHUD(APlayerController* PC)
 {
-    if (!HUDClass || !PC) { return nullptr; }
+    if (!PC) { return nullptr; }
 
     // Cache the player controller for camera blending and gun aim.
     CachedPlayerController = PC;
 
-    CombatHUD = CreateWidget<UCombatHUDWidget>(PC, HUDClass);
+    // The combat HUD is now fully built in C++ (UCombatHUDWidget). Always spawn
+    // the C++ class directly and IGNORE the editor-set HUDClass — a stale value
+    // pointing at the old WBP_CombatHUD would otherwise resurrect the old layout
+    // (and the now-emptied WBP action panel). Only fall back to HUDClass if it's
+    // somehow a different non-WBP subclass (it normally won't be set).
+    TSubclassOf<UCombatHUDWidget> ClassToSpawn = UCombatHUDWidget::StaticClass();
+    CombatHUD = CreateWidget<UCombatHUDWidget>(PC, ClassToSpawn);
     if (CombatHUD)
     {
         CombatHUD->AddToViewport();
@@ -1155,9 +1165,26 @@ void ABattleManager::PositionGunAimCamera(ACombatantBase* Player)
 
 void ABattleManager::BeginGunAimMode()
 {
-    if (bGunAimActive) { return; }
+    // NOTE: deliberately NOT early-returning when bGunAimActive is already true.
+    // This makes entering aim idempotent — pressing RMB always (re)asserts the
+    // aim camera, cursor handling, and the OnGunAimChanged broadcast. Without
+    // this, a stale bGunAimActive (e.g. after a cancel re-pointed the camera at
+    // the player) would leave the view target wrong while the HUD kept warping
+    // the cursor — "mouse locked, can't aim".
     if (!ActiveCombatant || ActiveCombatant->GetTeam() != ECombatTeam::Player) { return; }
     if (CurrentPhase != EBattlePhase::AwaitingInput) { return; }
+
+    // Fallback: if the arena didn't configure a CAM_GunAim actor, GunAimCameraActor
+    // stays null and aim silently no-ops (rotation early-returns, but the HUD still
+    // hides+warps the cursor — looks like "mouse locked, can't aim"). Spawn a
+    // runtime camera so aim works regardless of arena setup.
+    if (!GunAimCameraActor)
+    {
+        if (UWorld* World = GetWorld())
+        {
+            GunAimCameraActor = World->SpawnActor<ACameraActor>();
+        }
+    }
 
     bGunAimActive     = true;
     GunAimYawOffset   = 0.f;
@@ -1167,8 +1194,11 @@ void ABattleManager::BeginGunAimMode()
 
     if (GunAimCameraActor && CachedPlayerController)
     {
-        CachedPlayerController->SetViewTargetWithBlend(
-            GunAimCameraActor, 0.20f, VTBlend_Cubic);
+        // Switch view target IMMEDIATELY (no blend) — a blend was causing the
+        // view target to lag/never resolve in some post-cancel sequences, so
+        // camera rotations from UpdateGunAimRotation happened off-screen and
+        // aim looked completely broken.
+        CachedPlayerController->SetViewTarget(GunAimCameraActor);
         CachedPlayerController->bShowMouseCursor = false;
     }
 

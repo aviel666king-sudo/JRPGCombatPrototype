@@ -8,6 +8,8 @@
 #include "Core/BattleManager.h"
 #include "Components/ProtocolManagerComponent.h"
 #include "Travel/VisitedCheckpointRegistry.h"
+#include "Roster/RosterSubsystem.h"
+#include "Engine/GameInstance.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
 #include "DrawDebugHelpers.h"
@@ -143,6 +145,19 @@ void ACheckpoint::Rest(APawn* Resting)
     {
         GM->GetBattleManager()->ProtocolManager->InitializeCharges();
         UE_LOG(LogTemp, Log, TEXT("[Checkpoint] Protocol charges restocked"));
+    }
+
+    // 2b. Restock the PERSISTENT party pool + full-heal/revive the records (and
+    //     any live actors). This is the pool the overworld heal + roster screen
+    //     read, and it carries across levels.
+    if (UGameInstance* GI = World->GetGameInstance())
+    {
+        if (URosterSubsystem* Roster = GI->GetSubsystem<URosterSubsystem>())
+        {
+            static const TArray<ACombatantBase*> EmptyParty;
+            Roster->RestockAndHeal(GM ? GM->GetPlayerParty() : EmptyParty);
+            UE_LOG(LogTemp, Log, TEXT("[Checkpoint] Persistent party pool restocked + healed"));
+        }
     }
 
     // 3. Reset danger.

@@ -157,6 +157,7 @@ public:
 protected:
 
     virtual void BeginPlay() override;
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
     /** Bound to BattleManager->OnBattleEnded — handles cleanup + return to exploration. */
     UFUNCTION()

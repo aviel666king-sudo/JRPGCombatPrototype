@@ -11,10 +11,11 @@ public class JRPGCombat : ModuleRules
             "Core",
             "CoreUObject",
             "Engine",
-            "InputCore", 
+            "InputCore",
             "UMG",
             "Slate",
             "SlateCore",
+            "AssetRegistry",
         });
     }
 }

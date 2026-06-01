@@ -7,6 +7,8 @@
 #include "Core/BattleArena.h"
 #include "Characters/Base/CombatantBase.h"
 #include "Characters/Player/PlayerCombatant.h"
+#include "Roster/RosterSubsystem.h"
+#include "Engine/GameInstance.h"
 #include "UI/CombatHUDWidget.h"
 #include "Blueprint/UserWidget.h"
 #include "GameFramework/PlayerController.h"
@@ -408,57 +410,34 @@ bool AJrpgGameMode::UseHealingProtocolOverworld()
         UE_LOG(LogTemp, Log, TEXT("[Protocol] Cannot use healing protocol during combat."));
         return false;
     }
-    if (!BattleManager || !BattleManager->ProtocolManager)
+
+    // Healing now spends from the PERSISTENT party charge pool (URosterSubsystem),
+    // so it works in any level — including the Open World / Camp, where there's
+    // no placed BattleManager. PlayerParty may be empty in those levels; the
+    // subsystem just heals the records in that case.
+    UGameInstance* GI = GetGameInstance();
+    URosterSubsystem* Roster = GI ? GI->GetSubsystem<URosterSubsystem>() : nullptr;
+    if (!Roster)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[Protocol] No ProtocolManager available."));
-        ShowToast(TEXT("Heal failed: no ProtocolManager"), FColor::Red);
+        ShowToast(TEXT("Heal failed: no roster"), FColor::Red);
         return false;
     }
 
-    UProtocolManagerComponent* Pool = BattleManager->ProtocolManager;
-    if (!Pool->CanSpend(EProtocolType::Healing))
+    const bool bHealed = Roster->UseHealingCharge(PlayerParty);
+    if (bHealed)
     {
-        UE_LOG(LogTemp, Log, TEXT("[Protocol] No Healing charges remaining."));
+        ShowToast(FString::Printf(TEXT("Party healed!  Heal charges: %d / %d"),
+            Roster->GetHealCharges(), Roster->GetMaxHealCharges()), FColor::Green);
+    }
+    else if (Roster->GetHealCharges() <= 0)
+    {
         ShowToast(TEXT("No healing charges left"), FColor::Red);
-        return false;
     }
-
-    // Waste guard — refuse if everyone living is already full.
-    bool bAnyNeedsHealing = false;
-    for (ACombatantBase* P : PlayerParty)
+    else
     {
-        if (P && P->GetCurrentHP() > 0.f && P->GetMissingHP() > 0.f)
-        {
-            bAnyNeedsHealing = true;
-            break;
-        }
-    }
-    if (!bAnyNeedsHealing)
-    {
-        UE_LOG(LogTemp, Log, TEXT("[Protocol] No one needs healing."));
         ShowToast(TEXT("Party is at full HP"), FColor::Yellow);
-        return false;
     }
-
-    for (ACombatantBase* P : PlayerParty)
-    {
-        if (!P || P->GetCurrentHP() <= 0.f) { continue; }
-        const float Missing = P->GetMissingHP();
-        if (Missing > 0.f)
-        {
-            P->ApplyHealing(Missing, nullptr);
-            UE_LOG(LogTemp, Log, TEXT("[Protocol] Healed %s -> %.0f / %.0f"),
-                *P->GetName(), P->GetCurrentHP(), P->GetMaxHP());
-        }
-    }
-
-    Pool->SpendCharge(EProtocolType::Healing);
-    const int32 Remaining = Pool->GetCurrentCharges(EProtocolType::Healing);
-    const int32 Maximum   = Pool->GetMaxCharges(EProtocolType::Healing);
-    UE_LOG(LogTemp, Log, TEXT("[Protocol] Healing charge spent. %d remaining."), Remaining);
-    ShowToast(FString::Printf(TEXT("Party healed!  Heal charges: %d / %d"), Remaining, Maximum),
-              FColor::Green);
-    return true;
+    return bHealed;
 }
 
 void AJrpgGameMode::SetPlayerParty(const TArray<ACombatantBase*>& InParty)
@@ -472,6 +451,33 @@ void AJrpgGameMode::SetPlayerParty(const TArray<ACombatantBase*>& InParty)
     {
         if (Member) { Member->InitializeForBattle(); }
     }
+
+    // Persistent party store: seed once from this level's placed party, then
+    // restore any HP saved from a previous level so HP carries across travel.
+    if (UGameInstance* GI = GetGameInstance())
+    {
+        if (URosterSubsystem* Roster = GI->GetSubsystem<URosterSubsystem>())
+        {
+            Roster->SeedFromParty(PlayerParty);      // no-op after the first time
+            Roster->RestoreHPToParty(PlayerParty);   // applies saved HP
+        }
+    }
+}
+
+void AJrpgGameMode::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+    // Save live party HP back into the persistent records before this level is
+    // torn down (e.g. on travel), so the next level / the roster screen sees the
+    // up-to-date HP.
+    if (UGameInstance* GI = GetGameInstance())
+    {
+        if (URosterSubsystem* Roster = GI->GetSubsystem<URosterSubsystem>())
+        {
+            Roster->SaveHPFromParty(PlayerParty);
+        }
+    }
+
+    Super::EndPlay(EndPlayReason);
 }
 
 // -----------------------------------------------------------------------------

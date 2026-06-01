@@ -117,6 +117,11 @@ public:
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|UI")
     TSubclassOf<class USkillTreeWidget> SkillTreeClass;
 
+    /** Widget class for the roster / party-management screen (Tab). Defaults to
+     *  the C++ class (URosterWidget builds its own layout). */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|UI")
+    TSubclassOf<class URosterWidget> RosterClass;
+
     // -------------------------------------------------------------------------
     //  Travel inputs (T = portal, B = enter camp from OW,
     //                 L = leave at checkpoint, G = fast-travel at checkpoint)
@@ -297,6 +302,11 @@ protected:
     void HandlePartyPanelOpen();
     void HandlePartyPanelClose();
 
+    /** Tab — toggle the full-screen roster / party-management screen. */
+    void HandleToggleRoster();
+    void OpenRoster();
+    void CloseRoster();
+
     /** Toggle the stat shop. Opens only when a checkpoint is in range. */
     void HandleToggleShop();
     void OpenStatShop();
@@ -365,6 +375,11 @@ protected:
     TObjectPtr<class UFastTravelWidget> FastTravelWidget;
 
     bool bFastTravelOpen = false;
+
+    UPROPERTY()
+    TObjectPtr<class URosterWidget> RosterWidget;
+
+    bool bRosterOpen = false;
 
     bool  bIsAssassinating     = false;
     float AssassinationElapsed = 0.f;

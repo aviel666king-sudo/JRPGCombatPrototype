@@ -23,6 +23,7 @@
 #include "UI/StatShopWidget.h"
 #include "UI/SkillTreeWidget.h"
 #include "UI/FastTravelWidget.h"
+#include "UI/RosterWidget.h"
 #include "Travel/JrpgTravelSubsystem.h"
 #include "Travel/WorldPortal.h"
 #include "Kismet/GameplayStatics.h"
@@ -190,8 +191,8 @@ void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
         }
         if (PartyPanelAction)
         {
-            EIC->BindAction(PartyPanelAction, ETriggerEvent::Started,   this, &AExplorationPawn::HandlePartyPanelOpen);
-            EIC->BindAction(PartyPanelAction, ETriggerEvent::Completed, this, &AExplorationPawn::HandlePartyPanelClose);
+            // Tab now opens the full-screen roster (press to toggle, not hold).
+            EIC->BindAction(PartyPanelAction, ETriggerEvent::Started, this, &AExplorationPawn::HandleToggleRoster);
         }
         if (ShopAction)
         {
@@ -255,12 +256,11 @@ void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
         UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Heal bound to H key via direct fallback (no IA_Heal assigned)"));
     }
 
-    // Tab-key fallback for the party panel (hold to open).
+    // Tab-key fallback for the roster screen (press to toggle).
     if (PlayerInputComponent && !PartyPanelAction)
     {
-        PlayerInputComponent->BindKey(EKeys::Tab, IE_Pressed,  this, &AExplorationPawn::HandlePartyPanelOpen);
-        PlayerInputComponent->BindKey(EKeys::Tab, IE_Released, this, &AExplorationPawn::HandlePartyPanelClose);
-        UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Party panel bound to Tab key via direct fallback (no IA_PartyPanel assigned)"));
+        PlayerInputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &AExplorationPawn::HandleToggleRoster);
+        UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Roster bound to Tab key via direct fallback (no IA_PartyPanel assigned)"));
     }
 
     // K-key fallback for the stat shop (toggle; opens only at a checkpoint).
@@ -863,17 +863,8 @@ void AExplorationPawn::HandleHeal()
 {
     if (bIsAssassinating || bIsCastingCone) { return; }
 
-    // Heal only works while the party panel is open (hold Tab).
-    if (!bPartyPanelOpen)
-    {
-        if (GEngine)
-        {
-            GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Yellow,
-                TEXT("Hold Tab to open the party panel, then press H to heal"));
-        }
-        return;
-    }
-
+    // H now heals directly during exploration. (The old "hold Tab first" gate
+    // went away when Tab became the full-screen roster screen.)
     if (AJrpgGameMode* GM = Cast<AJrpgGameMode>(UGameplayStatics::GetGameMode(this)))
     {
         GM->UseHealingProtocolOverworld();
@@ -888,6 +879,58 @@ void AExplorationPawn::HandlePartyPanelOpen()
 void AExplorationPawn::HandlePartyPanelClose()
 {
     bPartyPanelOpen = false;
+}
+
+// -----------------------------------------------------------------------------
+//  Roster / party-management screen (Tab)
+// -----------------------------------------------------------------------------
+
+void AExplorationPawn::HandleToggleRoster()
+{
+    if (bRosterOpen) { CloseRoster(); }
+    else             { OpenRoster(); }
+}
+
+void AExplorationPawn::OpenRoster()
+{
+    if (bRosterOpen || bIsAssassinating || bIsCastingCone) { return; }
+
+    // Mutually exclusive with the other menus.
+    if (bShopOpen)      { CloseStatShop(); }
+    if (bSkillTreeOpen) { CloseSkillTree(); }
+
+    APlayerController* PC = Cast<APlayerController>(GetController());
+    if (!PC) { return; }
+
+    UClass* WidgetClass = RosterClass ? RosterClass.Get() : URosterWidget::StaticClass();
+    RosterWidget = CreateWidget<URosterWidget>(PC, WidgetClass);
+    if (!RosterWidget) { return; }
+
+    RosterWidget->OnCloseRequested = [this]() { CloseRoster(); };
+    RosterWidget->AddToViewport(50);
+    bRosterOpen = true;
+
+    PC->SetShowMouseCursor(true);
+    FInputModeUIOnly Mode;
+    Mode.SetWidgetToFocus(RosterWidget->TakeWidget());
+    Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+    PC->SetInputMode(Mode);
+}
+
+void AExplorationPawn::CloseRoster()
+{
+    if (RosterWidget)
+    {
+        RosterWidget->RemoveFromParent();
+        RosterWidget = nullptr;
+    }
+    bRosterOpen = false;
+
+    if (APlayerController* PC = Cast<APlayerController>(GetController()))
+    {
+        PC->SetShowMouseCursor(false);
+        PC->SetInputMode(FInputModeGameOnly());
+    }
 }
 
 void AExplorationPawn::GatherEncountersInCone(TArray<AEnemyEncounter*>& Out) const

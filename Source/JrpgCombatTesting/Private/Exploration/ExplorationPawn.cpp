@@ -94,25 +94,7 @@ void AExplorationPawn::BeginPlay()
                 Subsystem->AddMappingContext(ExplorationMappingContext, 0);
             }
         }
-
-        // Spawn the exploration HUD (crosshair + reload bar). The widget reads
-        // IsAiming() and GetGunCooldownPercent() each frame to draw itself.
-        if (ExplorationHUDClass)
-        {
-            ExplorationHUD = CreateWidget<UUserWidget>(PC, ExplorationHUDClass);
-            if (ExplorationHUD) { ExplorationHUD->AddToViewport(); }
-        }
     }
-}
-
-void AExplorationPawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
-{
-    if (ExplorationHUD)
-    {
-        ExplorationHUD->RemoveFromParent();
-        ExplorationHUD = nullptr;
-    }
-    Super::EndPlay(EndPlayReason);
 }
 
 void AExplorationPawn::Tick(float DeltaTime)
@@ -878,16 +860,6 @@ void AExplorationPawn::HandleHeal()
     {
         GM->UseHealingProtocolOverworld();
     }
-}
-
-void AExplorationPawn::HandlePartyPanelOpen()
-{
-    bPartyPanelOpen = true;
-}
-
-void AExplorationPawn::HandlePartyPanelClose()
-{
-    bPartyPanelOpen = false;
 }
 
 // -----------------------------------------------------------------------------

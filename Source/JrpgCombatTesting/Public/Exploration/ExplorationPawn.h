@@ -224,11 +224,6 @@ public:
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Exploration|Stealth")
     bool IsCrouching() const { return bIsCrouching; }
 
-    /** True while the player holds Tab. The HUD binds the party-panel
-     *  Visibility to this, and HandleHeal refuses unless it's open. */
-    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Exploration|UI")
-    bool IsPartyPanelOpen() const { return bPartyPanelOpen; }
-
     // -------------------------------------------------------------------------
     //  Assassination — channeled
     // -------------------------------------------------------------------------
@@ -258,20 +253,7 @@ public:
     class AEnemyEncounter* GetAssassinationTarget() const;
 
     // -------------------------------------------------------------------------
-    //  Exploration HUD
-    //  Assign a UUserWidget Blueprint (e.g. WBP_ExplorationHUD) here. The pawn
-    //  spawns it on BeginPlay and removes it on EndPlay. The widget reads
-    //  IsAiming() and GetGunCooldownPercent() to draw the crosshair + reload bar.
-    // -------------------------------------------------------------------------
-
-    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|UI")
-    TSubclassOf<UUserWidget> ExplorationHUDClass;
-
-    UPROPERTY(BlueprintReadOnly, Category = "Exploration|UI")
-    TObjectPtr<UUserWidget> ExplorationHUD;
-
-    // -------------------------------------------------------------------------
-    //  Gun queries — bind these in the HUD widget
+    //  Gun queries — exposed for any HUD / debug
     // -------------------------------------------------------------------------
 
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Exploration|Gun")
@@ -287,7 +269,6 @@ public:
 protected:
 
     virtual void BeginPlay() override;
-    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
     virtual void Tick(float DeltaTime) override;
     virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 
@@ -302,9 +283,6 @@ protected:
     void HandleAssassinate();
     void HandleInteract();
     void HandleHeal();
-    void HandlePartyPanelOpen();
-    void HandlePartyPanelClose();
-
     /** Tab — toggle the full-screen roster / party-management screen. */
     void HandleToggleRoster();
     void OpenRoster(bool bUpgrade = false);
@@ -366,7 +344,6 @@ protected:
     bool  bIsAiming         = false;
     bool  bIsCastingCone    = false;
     bool  bIsCrouching      = false;
-    bool  bPartyPanelOpen   = false;
     bool  bShopOpen         = false;
     bool  bSkillTreeOpen    = false;
     float CooldownRemaining = 0.f;

@@ -15,7 +15,6 @@ public class JRPGCombat : ModuleRules
             "UMG",
             "Slate",
             "SlateCore",
-            "AssetRegistry",
         });
     }
 }

@@ -4,6 +4,41 @@
 #include "UObject/ConstructorHelpers.h"
 #include "Progression/SkillTreeDataAsset.h"
 #include "Abilities/CombatAbility.h"
+#include "Equipment/CharacterChipDataAsset.h"
+#include "Equipment/CharacterArmorDataAsset.h"
+#include "Equipment/CharacterWeaponDataAsset.h"
+
+namespace
+{
+    /** Add (Sign=+1) or subtract (Sign=-1) every field of In onto Out. */
+    void AccumulateStats(FCombatStats& Out, const FCombatStats& In, float Sign)
+    {
+        Out.MaxHP      += Sign * In.MaxHP;
+        Out.MaxAP      += Sign * In.MaxAP;
+        Out.StartingAP += Sign * In.StartingAP;
+        Out.Attack     += Sign * In.Attack;
+        Out.Defense    += Sign * In.Defense;
+        Out.Speed      += Sign * In.Speed;
+        Out.CritChance += Sign * In.CritChance;
+    }
+
+    /** Adds a weapon's tier-scaled buff (one stat field) into Out. */
+    void AccumulateWeaponBuff(FCombatStats& Out, const UCharacterWeaponDataAsset* Weapon, float Sign)
+    {
+        if (!Weapon) { return; }
+        const float Value = Sign * Weapon->GetCurrentBuffValue();
+        switch (Weapon->BuffedStat)
+        {
+            case EBuffedStat::MaxHP:      Out.MaxHP      += Value; break;
+            case EBuffedStat::MaxAP:      Out.MaxAP      += Value; break;
+            case EBuffedStat::Attack:     Out.Attack     += Value; break;
+            case EBuffedStat::Defense:    Out.Defense    += Value; break;
+            case EBuffedStat::Speed:      Out.Speed      += Value; break;
+            case EBuffedStat::CritChance: Out.CritChance += Value; break;
+            default: break;
+        }
+    }
+}
 
 APlayerCombatant::APlayerCombatant()
 {
@@ -151,6 +186,12 @@ void APlayerCombatant::BeginPlay()
 {
     Super::BeginPlay();
 
+    // Auto-equip the character's starting weapons if the live slots are empty.
+    // Lets each character ship with a guaranteed default loadout (per pitch:
+    // "starting main weapon and gun present at the beginning of the game").
+    if (!MainWeapon && StartingMainWeapon) { MainWeapon = StartingMainWeapon; }
+    if (!Gun        && StartingGun)        { Gun        = StartingGun;        }
+
     // If no tree asset was assigned in the editor, build the character's
     // default tree in C++ (subclasses override PopulateDefaultSkillTree).
     if (!SkillTree)
@@ -262,4 +303,46 @@ void APlayerCombatant::GetEquippedAbilityClasses(TArray<TSubclassOf<UCombatAbili
             if (Node->AbilityClass) { Out.AddUnique(Node->AbilityClass); }
         }
     }
+}
+
+// -----------------------------------------------------------------------------
+//  Equipment (chip + armor stat aggregation)
+// -----------------------------------------------------------------------------
+
+void APlayerCombatant::InitializeForBattle()
+{
+    // Bake equipment delta into BaseStats first so the resource pool max
+    // (set inside Super) reflects the equipped state.
+    ApplyEquipmentBonuses();
+    Super::InitializeForBattle();
+}
+
+void APlayerCombatant::ApplyEquipmentBonuses()
+{
+    FCombatStats NewDelta;   // zero-initialised
+
+    for (const TObjectPtr<UCharacterChipDataAsset>& Chip : Chips)
+    {
+        if (Chip) { AccumulateStats(NewDelta, Chip->GetCurrentStatDelta(), +1.f); }
+    }
+    if (Armor)
+    {
+        AccumulateStats(NewDelta, Armor->StatDelta, +1.f);
+        // Armor carries its own chip socket (independent of the 3 character
+        // chips). When the armor is equipped, that chip's stats also apply.
+        if (Armor->SocketedChip)
+        {
+            AccumulateStats(NewDelta, Armor->SocketedChip->GetCurrentStatDelta(), +1.f);
+        }
+    }
+
+    // Weapons buff a single stat field, scaled by tier.
+    AccumulateWeaponBuff(NewDelta, MainWeapon, +1.f);
+    AccumulateWeaponBuff(NewDelta, Gun,        +1.f);
+
+    // Undo previously-baked delta, then apply the new total — keeps BaseStats
+    // correct across equipment swaps and re-entries.
+    AccumulateStats(BaseStats, AppliedEquipmentDelta, -1.f);
+    AccumulateStats(BaseStats, NewDelta,              +1.f);
+    AppliedEquipmentDelta = NewDelta;
 }

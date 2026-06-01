@@ -120,6 +120,22 @@ public:
     void DebugLevelUp();
 
     // -------------------------------------------------------------------------
+    //  Equipment — chips + armor contribute additive StatDelta to BaseStats.
+    //  Weapons are handled separately (their BaseDamage/Element are read by
+    //  ability code paths, not by the generic stat system).
+    // -------------------------------------------------------------------------
+
+    /** Sum every equipped chip + armor's StatDelta, undo any previously-baked
+     *  delta, and apply the new total to BaseStats. Re-equip-safe (calling it
+     *  again after a swap correctly diffs the change). Called automatically at
+     *  the start of every battle via InitializeForBattle. */
+    void ApplyEquipmentBonuses();
+
+    /** Override so equipment bonuses bake into BaseStats before the resource
+     *  pool (HP/AP max) is initialised from BaseStats. */
+    virtual void InitializeForBattle() override;
+
+    // -------------------------------------------------------------------------
     //  Stat shop — spend StatCoins on permanent BaseStats upgrades. Read by
     //  UStatShopWidget (opened at checkpoints).
     // -------------------------------------------------------------------------
@@ -217,6 +233,11 @@ protected:
     UPROPERTY(BlueprintReadOnly, Category = "Character|SkillTree")
     TSet<FName> UnlockedNodes;
 
+    /** Tracks the equipment StatDelta currently baked into BaseStats so we can
+     *  diff it out on re-equip. Transient — not saved (BaseStats already holds
+     *  the applied total; saving both would double-count on load). */
+    FCombatStats AppliedEquipmentDelta;
+
     /** Ordered list of equipped node ids (max MaxEquippedSkills). Subset of
      *  UnlockedNodes. Drives which skills appear in the combat menu. */
     TArray<FName> EquippedNodes;
@@ -251,6 +272,17 @@ public:
      *  with bIsGun = true can go here. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Character|Equipment")
     TObjectPtr<UCharacterWeaponDataAsset> Gun;
+
+    /** Starting main weapon — auto-equipped into MainWeapon in BeginPlay if
+     *  that slot is empty. Lets each character ship with a guaranteed default
+     *  weapon (the one they have at game start, per the design pitch). */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Character|Equipment")
+    TObjectPtr<UCharacterWeaponDataAsset> StartingMainWeapon;
+
+    /** Starting gun — auto-equipped into Gun in BeginPlay if that slot is
+     *  empty. Same purpose as StartingMainWeapon. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Character|Equipment")
+    TObjectPtr<UCharacterWeaponDataAsset> StartingGun;
 
     /** Max chip slots per character. Caps the Chips array at this size at
      *  edit time / equip time. */

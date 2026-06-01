@@ -66,16 +66,66 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Combat")
     bool bIsGun = false;
 
-    /** Damage element. Each weapon carries its own — abilities can override. */
+    /** Physical element. EVERY weapon carries one — pick from the physical
+     *  half of EElement: Pierce / Slash / Smash. Set to None ONLY for purely
+     *  magical weapons (staves, etc.) that deal no physical damage at all.
+     *  (The dropdown shows all EElement values; designers must stay within
+     *  the physical subset for this field.) */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Combat")
-    EElement Element = EElement::Wind;
+    EElement PhysicalElement = EElement::Slash;
 
-    /** Physical / Magical / Special. Affects target reaction lookup. */
+    /** Magical element. EVERY weapon carries one — pick from the magical half
+     *  of EElement: Wind / Fire / Ice / Electric / Nature / Light / Dark, or
+     *  None for plain non-imbued weapons. A fire-imbued katana = PhysicalElement
+     *  Slash + MagicalElement Fire; a pure flame staff = PhysicalElement None
+     *  + MagicalElement Fire. Abilities can override either field at cast-time. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Combat")
+    EElement MagicalElement = EElement::None;
+
+    /** Physical / Magical / Special. Affects target reaction lookup. Independent
+     *  of the element fields — a katana with MagicalElement=Fire can still be
+     *  DamageType=Physical (fire-imbued blade) or DamageType=Magical (pure
+     *  flame slash). Designer chooses. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Combat")
     EDamageType DamageType = EDamageType::Physical;
 
-    /** Base damage before stat modifiers / ability multipliers. */
+    /** Base damage before stat modifiers / ability multipliers. Read by future
+     *  ability paths that scale damage off the weapon (not yet wired). */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Combat",
               meta = (ClampMin = "0.0"))
     float BaseDamage = 20.f;
+
+    // -------------------------------------------------------------------------
+    //  Tier + stat buff
+    //
+    //  Each weapon variant buffs ONE BaseStats field, and the magnitude of that
+    //  buff scales with CurrentTier. Designer authors which stat is buffed and
+    //  the value at each tier — guns leave the D slot at 0 since they start at
+    //  C; S+ is Main-only and is 0 for guns.
+    //
+    //  Future tiers also unlock passive effects — that infrastructure isn't
+    //  built yet (planned passive system), so for now this is stats-only.
+    // -------------------------------------------------------------------------
+
+    /** Which BaseStats field this weapon buffs while equipped. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Tier")
+    EBuffedStat BuffedStat = EBuffedStat::Attack;
+
+    /** Current tier this weapon is at. Determines which entry of
+     *  BuffValuePerTier is applied. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Tier")
+    EWeaponTier CurrentTier = EWeaponTier::D;
+
+    /** Buff value for BuffedStat at each tier, indexed by EWeaponTier:
+     *  [0]=D, [1]=C, [2]=B, [3]=A, [4]=S, [5]=S+. Guns leave [0] at 0. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Tier")
+    TArray<float> BuffValuePerTier;
+
+    /** Helper: returns the BuffValuePerTier entry for CurrentTier (0 if out of
+     *  range / unset). */
+    float GetCurrentBuffValue() const
+    {
+        const int32 Index = static_cast<int32>(CurrentTier);
+        return BuffValuePerTier.IsValidIndex(Index) ? BuffValuePerTier[Index] : 0.f;
+    }
 };

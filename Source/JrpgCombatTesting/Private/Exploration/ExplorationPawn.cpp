@@ -22,6 +22,9 @@
 #include "Exploration/EnemyDetectionComponent.h"
 #include "UI/StatShopWidget.h"
 #include "UI/SkillTreeWidget.h"
+#include "UI/FastTravelWidget.h"
+#include "Travel/JrpgTravelSubsystem.h"
+#include "Travel/WorldPortal.h"
 #include "Kismet/GameplayStatics.h"
 
 AExplorationPawn::AExplorationPawn()
@@ -198,6 +201,22 @@ void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
         {
             EIC->BindAction(SkillTreeAction, ETriggerEvent::Started, this, &AExplorationPawn::HandleToggleSkillTree);
         }
+        if (PortalAction)
+        {
+            EIC->BindAction(PortalAction, ETriggerEvent::Started, this, &AExplorationPawn::HandlePortal);
+        }
+        if (CampEntryAction)
+        {
+            EIC->BindAction(CampEntryAction, ETriggerEvent::Started, this, &AExplorationPawn::HandleCampEntry);
+        }
+        if (LeaveCheckpointAction)
+        {
+            EIC->BindAction(LeaveCheckpointAction, ETriggerEvent::Started, this, &AExplorationPawn::HandleLeaveCheckpoint);
+        }
+        if (FastTravelAction)
+        {
+            EIC->BindAction(FastTravelAction, ETriggerEvent::Started, this, &AExplorationPawn::HandleOpenFastTravel);
+        }
     }
 
     // Direct-key fallback for crouch — binds the C key on the raw input
@@ -251,11 +270,34 @@ void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
         UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Stat shop bound to K key via direct fallback (no IA_Shop assigned)"));
     }
 
-    // J-key fallback for the skill tree (toggle; opens anywhere).
+    // J-key fallback for the skill tree (toggle; opens only at a checkpoint).
     if (PlayerInputComponent && !SkillTreeAction)
     {
         PlayerInputComponent->BindKey(EKeys::J, IE_Pressed, this, &AExplorationPawn::HandleToggleSkillTree);
         UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Skill tree bound to J key via direct fallback (no IA_SkillTree assigned)"));
+    }
+
+    // Travel key fallbacks. T = portal Use, B = camp entry from OW, L = leave
+    // at checkpoint, G = fast-travel at checkpoint.
+    if (PlayerInputComponent && !PortalAction)
+    {
+        PlayerInputComponent->BindKey(EKeys::T, IE_Pressed, this, &AExplorationPawn::HandlePortal);
+        UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Portal bound to T key via direct fallback (no IA_Portal assigned)"));
+    }
+    if (PlayerInputComponent && !CampEntryAction)
+    {
+        PlayerInputComponent->BindKey(EKeys::B, IE_Pressed, this, &AExplorationPawn::HandleCampEntry);
+        UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Camp entry bound to B key via direct fallback (no IA_CampEntry assigned)"));
+    }
+    if (PlayerInputComponent && !LeaveCheckpointAction)
+    {
+        PlayerInputComponent->BindKey(EKeys::L, IE_Pressed, this, &AExplorationPawn::HandleLeaveCheckpoint);
+        UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Leave-checkpoint bound to L key via direct fallback (no IA_LeaveCheckpoint assigned)"));
+    }
+    if (PlayerInputComponent && !FastTravelAction)
+    {
+        PlayerInputComponent->BindKey(EKeys::G, IE_Pressed, this, &AExplorationPawn::HandleOpenFastTravel);
+        UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Fast travel bound to G key via direct fallback (no IA_FastTravel assigned)"));
     }
 }
 
@@ -744,7 +786,7 @@ void AExplorationPawn::CloseStatShop()
 }
 
 // -----------------------------------------------------------------------------
-//  Skill tree (opens anywhere via J)
+//  Skill tree (opens via J only when standing on a checkpoint)
 // -----------------------------------------------------------------------------
 
 void AExplorationPawn::HandleToggleSkillTree()
@@ -757,6 +799,27 @@ void AExplorationPawn::OpenSkillTree()
 {
     if (bSkillTreeOpen || bIsAssassinating || bIsCastingCone) { return; }
     if (bShopOpen) { CloseStatShop(); }   // mutually exclusive menus
+
+    UWorld* World = GetWorld();
+    if (!World) { return; }
+
+    // Gate: only at a checkpoint (mirrors OpenStatShop). Skill purchases are
+    // checkpoint-only per the design — Levels have checkpoints, Camp has its
+    // own checkpoint, Open World does not.
+    bool bAtCheckpoint = false;
+    for (TActorIterator<ACheckpoint> It(World); It; ++It)
+    {
+        if (*It && (*It)->IsPlayerInRange()) { bAtCheckpoint = true; break; }
+    }
+    if (!bAtCheckpoint)
+    {
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Yellow,
+                TEXT("Rest at a checkpoint to access the skill tree"));
+        }
+        return;
+    }
 
     APlayerController* PC = Cast<APlayerController>(GetController());
     if (!PC) { return; }
@@ -913,4 +976,164 @@ void AExplorationPawn::HandleLook(const FInputActionValue& Value)
 void AExplorationPawn::EndConeCastLock()
 {
     bIsCastingCone = false;
+}
+
+// -----------------------------------------------------------------------------
+//  Travel handlers (T / B / L / G)
+// -----------------------------------------------------------------------------
+
+namespace
+{
+    /** Canonical short level name (strips PIE prefix and any path). */
+    FName GetCanonicalLevelName(const UWorld* World)
+    {
+        if (!World) { return NAME_None; }
+        FString MapName = World->GetMapName();
+        MapName.RemoveFromStart(World->StreamingLevelsPrefix);
+        return FName(*FPaths::GetBaseFilename(MapName));
+    }
+
+    UJrpgTravelSubsystem* GetTravel(const UWorld* World)
+    {
+        UGameInstance* GI = World ? World->GetGameInstance() : nullptr;
+        return GI ? GI->GetSubsystem<UJrpgTravelSubsystem>() : nullptr;
+    }
+
+    ACheckpoint* FindCheckpointInRange(UWorld* World)
+    {
+        if (!World) { return nullptr; }
+        for (TActorIterator<ACheckpoint> It(World); It; ++It)
+        {
+            if (*It && (*It)->IsPlayerInRange()) { return *It; }
+        }
+        return nullptr;
+    }
+
+    AWorldPortal* FindPortalInRange(UWorld* World)
+    {
+        if (!World) { return nullptr; }
+        for (TActorIterator<AWorldPortal> It(World); It; ++It)
+        {
+            if (*It && (*It)->IsPlayerInRange()) { return *It; }
+        }
+        return nullptr;
+    }
+}
+
+void AExplorationPawn::HandlePortal()
+{
+    // Block while menus are up or while combat-related lockouts are active.
+    if (bIsAssassinating || bIsCastingCone || bShopOpen || bSkillTreeOpen || bFastTravelOpen) { return; }
+
+    AWorldPortal* Portal = FindPortalInRange(GetWorld());
+    if (!Portal)
+    {
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Yellow,
+                TEXT("Stand on a portal to travel"));
+        }
+        return;
+    }
+    Portal->Use(this);
+}
+
+void AExplorationPawn::HandleCampEntry()
+{
+    if (bIsAssassinating || bIsCastingCone || bShopOpen || bSkillTreeOpen || bFastTravelOpen) { return; }
+
+    UWorld* World = GetWorld();
+    UJrpgTravelSubsystem* Travel = GetTravel(World);
+    if (!Travel) { return; }
+
+    // Camp-entry keybind only works while standing in the Open World level.
+    const FName Here = GetCanonicalLevelName(World);
+    if (Here != Travel->OpenWorldLevelName)
+    {
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Yellow,
+                TEXT("Camp is only accessible from the Open World"));
+        }
+        return;
+    }
+
+    Travel->EnterCampFromOpenWorld(this);
+}
+
+void AExplorationPawn::HandleLeaveCheckpoint()
+{
+    if (bIsAssassinating || bIsCastingCone || bShopOpen || bSkillTreeOpen || bFastTravelOpen) { return; }
+
+    ACheckpoint* CP = FindCheckpointInRange(GetWorld());
+    if (!CP)
+    {
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Yellow,
+                TEXT("Stand at a checkpoint to leave"));
+        }
+        return;
+    }
+
+    UJrpgTravelSubsystem* Travel = GetTravel(GetWorld());
+    if (!Travel) { return; }
+
+    if (CP->bIsCampCheckpoint)
+    {
+        // Camp checkpoint: returns the player to the OW transform saved when
+        // they pressed B in the Open World.
+        Travel->LeaveCamp();
+    }
+    else
+    {
+        // Level checkpoint: travel to OW and land at the portal node for the
+        // level we're leaving (tag "Portal_<LevelName>" by convention).
+        const FName Here = GetCanonicalLevelName(GetWorld());
+        const FName ArrivalTag = FName(*FString::Printf(TEXT("Portal_%s"), *Here.ToString()));
+        Travel->TravelToLevel(Travel->OpenWorldLevelName, ArrivalTag);
+    }
+}
+
+void AExplorationPawn::HandleOpenFastTravel()
+{
+    if (bIsAssassinating || bIsCastingCone || bShopOpen || bSkillTreeOpen || bFastTravelOpen) { return; }
+
+    ACheckpoint* CP = FindCheckpointInRange(GetWorld());
+    if (!CP) { return; }                            // silent — G has no meaning off-checkpoint
+    if (CP->bIsCampCheckpoint) { return; }          // no fast-travel from camp
+
+    APlayerController* PC = Cast<APlayerController>(GetController());
+    if (!PC) { return; }
+
+    UClass* WidgetClass = FastTravelClass ? FastTravelClass.Get() : UFastTravelWidget::StaticClass();
+    FastTravelWidget = CreateWidget<UFastTravelWidget>(PC, WidgetClass);
+    if (!FastTravelWidget) { return; }
+
+    FastTravelWidget->OriginCheckpointId = CP->GetCheckpointId();
+    FastTravelWidget->OnCloseRequested = [this]() { CloseFastTravel(); };
+    FastTravelWidget->AddToViewport(50);
+    bFastTravelOpen = true;
+
+    PC->SetShowMouseCursor(true);
+    FInputModeUIOnly Mode;
+    Mode.SetWidgetToFocus(FastTravelWidget->TakeWidget());
+    Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+    PC->SetInputMode(Mode);
+}
+
+void AExplorationPawn::CloseFastTravel()
+{
+    if (FastTravelWidget)
+    {
+        FastTravelWidget->RemoveFromParent();
+        FastTravelWidget = nullptr;
+    }
+    bFastTravelOpen = false;
+
+    if (APlayerController* PC = Cast<APlayerController>(GetController()))
+    {
+        PC->SetShowMouseCursor(false);
+        PC->SetInputMode(FInputModeGameOnly());
+    }
 }

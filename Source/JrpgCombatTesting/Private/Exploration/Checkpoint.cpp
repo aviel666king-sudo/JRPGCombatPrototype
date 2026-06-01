@@ -7,11 +7,24 @@
 #include "Core/DangerManager.h"
 #include "Core/BattleManager.h"
 #include "Components/ProtocolManagerComponent.h"
+#include "Travel/VisitedCheckpointRegistry.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
 #include "DrawDebugHelpers.h"
 #include "Kismet/GameplayStatics.h"
 #include "Engine/Engine.h"
+
+namespace
+{
+    /** Canonical short level name (strips PIE prefixes and any path). */
+    FName GetCanonicalLevelName(const UWorld* World)
+    {
+        if (!World) { return NAME_None; }
+        FString MapName = World->GetMapName();
+        MapName.RemoveFromStart(World->StreamingLevelsPrefix);
+        return FName(*FPaths::GetBaseFilename(MapName));
+    }
+}
 
 ACheckpoint::ACheckpoint()
 {
@@ -38,6 +51,22 @@ void ACheckpoint::BeginPlay()
         InteractSphere->SetSphereRadius(InteractRadius);
         InteractSphere->OnComponentBeginOverlap.AddDynamic(this, &ACheckpoint::HandleBeginOverlap);
         InteractSphere->OnComponentEndOverlap.AddDynamic(this, &ACheckpoint::HandleEndOverlap);
+
+        // Initial-overlap sweep: if the player pawn spawned already inside
+        // the sphere (e.g. PlayerStart next to the camp checkpoint), UE
+        // doesn't fire OnBeginOverlap for that pre-existing overlap. Without
+        // this check, L/E/etc. wouldn't work until the player walks out and
+        // back in.
+        TArray<AActor*> Overlapping;
+        InteractSphere->GetOverlappingActors(Overlapping, APawn::StaticClass());
+        for (AActor* Actor : Overlapping)
+        {
+            if (Actor == UGameplayStatics::GetPlayerPawn(this, 0))
+            {
+                bPlayerInRange = true;
+                break;
+            }
+        }
     }
 }
 
@@ -142,6 +171,20 @@ void ACheckpoint::Rest(APawn* Resting)
     }
     UE_LOG(LogTemp, Log, TEXT("[Checkpoint] Reset %d encounters to spawn"), ResetCount);
 
+    // 5. Register this checkpoint as visited so it appears in the fast-travel
+    //    list at OTHER checkpoints in the same level. Camp checkpoints are
+    //    excluded (you don't fast-travel TO camp, you keybind into it).
+    if (!bIsCampCheckpoint)
+    {
+        if (UGameInstance* GI = World->GetGameInstance())
+        {
+            if (UVisitedCheckpointRegistry* Reg = GI->GetSubsystem<UVisitedCheckpointRegistry>())
+            {
+                Reg->RegisterVisited(GetCanonicalLevelName(World), GetCheckpointId());
+            }
+        }
+    }
+
     UE_LOG(LogTemp, Log, TEXT("[Checkpoint] Rest complete"));
 
     // Temporary on-screen feedback. Removed once the proper HUD lands.
@@ -152,12 +195,25 @@ void ACheckpoint::Rest(APawn* Resting)
     }
 }
 
+FName ACheckpoint::GetCheckpointId() const
+{
+    return CheckpointId != NAME_None ? CheckpointId : GetFName();
+}
+
 #if !UE_BUILD_SHIPPING
 void ACheckpoint::DrawInteractPrompt()
 {
     const FVector Base = GetActorLocation() + FVector(0.f, 0.f, 120.f);
+
+    // The "leave" line changes shape on camp checkpoints.
+    const TCHAR* LeavePrompt = bIsCampCheckpoint
+        ? TEXT("[L] Leave Camp")
+        : TEXT("[L] Leave to Open World    [G] Fast Travel");
+
     DrawDebugString(GetWorld(), Base, TEXT("[E] Rest    [K] Stat Shop    [J] Skill Tree"),
                     nullptr, FColor::Green, 0.f, true, 1.2f);
+    DrawDebugString(GetWorld(), Base + FVector(0.f, 0.f, 20.f), LeavePrompt,
+                    nullptr, FColor(0, 200, 255), 0.f, true, 1.2f);
     DrawDebugCircle(GetWorld(), GetActorLocation(), InteractRadius, 32,
                     FColor::Green, false, -1.f, 0, 2.f,
                     FVector(0, 1, 0), FVector(1, 0, 0), false);

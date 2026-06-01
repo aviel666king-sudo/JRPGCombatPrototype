@@ -7,6 +7,7 @@
 
 class UTexture2D;
 class USkeletalMesh;
+class UCharacterChipDataAsset;
 
 /**
  * UCharacterArmorDataAsset
@@ -41,7 +42,17 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Armor|Identity")
     TObjectPtr<USkeletalMesh> VisualMesh;
 
-    /** Base stat delta. Override-protocol chips will stack on top of this. */
+    /** Base stat delta. The socketed armor chip stacks on top of this. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Armor|Stats")
     FCombatStats StatDelta;
+
+    /** Armor chip socket — independent of the wearer's 3 character chips.
+     *  The chip is BOUND TO THIS ARMOR: when the player swaps armor, the chip
+     *  stays with the old armor (you can only re-bind chips at camp). When
+     *  this armor is equipped, the socketed chip's GetCurrentStatDelta() is
+     *  added to the wielder's BaseStats via APlayerCombatant::ApplyEquipmentBonuses.
+     *  Same UCharacterChipDataAsset type as the 3 character-chip slots — chips
+     *  themselves are not socket-typed; the socket location is. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Armor|Stats")
+    TObjectPtr<UCharacterChipDataAsset> SocketedChip;
 };

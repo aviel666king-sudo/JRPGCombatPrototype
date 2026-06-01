@@ -60,3 +60,35 @@ enum class EChipRarity : uint8
     Epic                UMETA(DisplayName = "Epic"),
     CharacterSpecific   UMETA(DisplayName = "Character-Specific"),
 };
+
+/**
+ * Weapon tier — determines the magnitude of a weapon's single buffed stat and
+ * which passives it has unlocked. Main weapons range D..S+; guns range C..S
+ * (the unused tier slots are simply 0 in BuffValuePerTier).
+ */
+UENUM(BlueprintType)
+enum class EWeaponTier : uint8
+{
+    D       UMETA(DisplayName = "D"),
+    C       UMETA(DisplayName = "C"),
+    B       UMETA(DisplayName = "B"),
+    A       UMETA(DisplayName = "A"),
+    S       UMETA(DisplayName = "S"),
+    SPlus   UMETA(DisplayName = "S+"),
+};
+
+/**
+ * Which BaseStat field a weapon's tier scaling buffs. Authored per-weapon so
+ * one Katana variant can buff Attack while another Katana buffs Speed.
+ */
+UENUM(BlueprintType)
+enum class EBuffedStat : uint8
+{
+    None        UMETA(DisplayName = "None"),
+    MaxHP       UMETA(DisplayName = "Max HP"),
+    MaxAP       UMETA(DisplayName = "Max AP"),
+    Attack      UMETA(DisplayName = "Attack"),
+    Defense     UMETA(DisplayName = "Defense"),
+    Speed       UMETA(DisplayName = "Speed"),
+    CritChance  UMETA(DisplayName = "Crit Chance"),
+};

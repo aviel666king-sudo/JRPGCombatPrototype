@@ -118,6 +118,28 @@ public:
     TSubclassOf<class USkillTreeWidget> SkillTreeClass;
 
     // -------------------------------------------------------------------------
+    //  Travel inputs (T = portal, B = enter camp from OW,
+    //                 L = leave at checkpoint, G = fast-travel at checkpoint)
+    //  All four have direct-key fallbacks like the existing inputs.
+    // -------------------------------------------------------------------------
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Input")
+    TObjectPtr<UInputAction> PortalAction;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Input")
+    TObjectPtr<UInputAction> CampEntryAction;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Input")
+    TObjectPtr<UInputAction> LeaveCheckpointAction;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Input")
+    TObjectPtr<UInputAction> FastTravelAction;
+
+    /** Widget class for the fast-travel overlay. Defaults to the C++ class. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|UI")
+    TSubclassOf<class UFastTravelWidget> FastTravelClass;
+
+    // -------------------------------------------------------------------------
     //  Gun — tunables
     // -------------------------------------------------------------------------
 
@@ -285,6 +307,22 @@ protected:
     void OpenSkillTree();
     void CloseSkillTree();
 
+    /** T — interact with the nearest in-range AWorldPortal (calls Use). */
+    void HandlePortal();
+
+    /** B — when in the Open World level, snapshot current transform and travel
+     *  to the Camp via the travel subsystem. No-op anywhere else. */
+    void HandleCampEntry();
+
+    /** L — at a checkpoint, leave to OW (or leave camp if it's the camp
+     *  checkpoint). No-op away from a checkpoint. */
+    void HandleLeaveCheckpoint();
+
+    /** G — at a checkpoint, open the fast-travel widget (list of visited
+     *  checkpoints in this level). No-op away from a checkpoint. */
+    void HandleOpenFastTravel();
+    void CloseFastTravel();
+
     /** Helper: line trace forward from the camera. Returns the encounter hit, if any. */
     class AEnemyEncounter* TraceForEncounter() const;
 
@@ -322,6 +360,11 @@ protected:
 
     UPROPERTY()
     TObjectPtr<class USkillTreeWidget> SkillTreeWidget;
+
+    UPROPERTY()
+    TObjectPtr<class UFastTravelWidget> FastTravelWidget;
+
+    bool bFastTravelOpen = false;
 
     bool  bIsAssassinating     = false;
     float AssassinationElapsed = 0.f;

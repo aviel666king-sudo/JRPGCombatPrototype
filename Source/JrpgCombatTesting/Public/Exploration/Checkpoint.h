@@ -39,6 +39,31 @@ public:
               meta = (ClampMin = "50.0"))
     float InteractRadius = 250.f;
 
+    /** Stable identifier used by the visited-checkpoint registry. Must be
+     *  unique within the level. If left blank, GetCheckpointId() falls back to
+     *  the actor's name — fine for one-off level layouts, but designers should
+     *  set this explicitly so renames in the editor don't break fast-travel
+     *  persistence. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Checkpoint")
+    FName CheckpointId;
+
+    /** True for the single checkpoint inside the Camp level. Changes the
+     *  "leave to Open World" affordance into "leave Camp" — i.e. uses the
+     *  travel subsystem's saved-transform return instead of routing to a
+     *  level's OW portal node. There should be exactly ONE camp checkpoint
+     *  across the whole project. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Checkpoint")
+    bool bIsCampCheckpoint = false;
+
+    /** Designer-friendly display label used in the fast-travel list. Falls
+     *  back to CheckpointId.ToString() if blank. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Checkpoint")
+    FText DisplayName;
+
+    /** Stable identifier (CheckpointId, falling back to actor name). */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Checkpoint")
+    FName GetCheckpointId() const;
+
     /** True while the player pawn is overlapping the sphere. The pawn reads
      *  this to decide whether E should trigger Rest. */
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Checkpoint")

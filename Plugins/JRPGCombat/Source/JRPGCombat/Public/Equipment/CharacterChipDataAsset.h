@@ -57,14 +57,36 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chip|Identity")
     TSubclassOf<class APlayerCombatant> OwnerCharacterClass;
 
-    /** Stat delta applied additively to the wielder's BaseStats when equipped.
-     *  e.g. MaxHP = 50 → +50 max HP. Negative values are fine for trade-offs. */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chip|Stats")
-    FCombatStats StatDelta;
+    // -------------------------------------------------------------------------
+    //  Level + stat scaling
+    //
+    //  Chips have 3 levels. Each level has its own StatDelta authored by the
+    //  designer, so e.g. L1 = +20 HP, L2 = +35 HP, L3 = +55 HP. Levels are
+    //  upgraded via main-game currency + materials (upgrade pipeline TBD).
+    // -------------------------------------------------------------------------
 
-    /** Free-text gameplay effect description (the "unique effect" per pitch).
-     *  Concrete effect hooks will land in a future pass — this is the
-     *  designer-facing label for now. */
+    /** Current level (1..3). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chip|Stats",
+              meta = (ClampMin = "1", ClampMax = "3"))
+    int32 CurrentLevel = 1;
+
+    /** Per-level stat delta. Index 0 = L1, 1 = L2, 2 = L3. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chip|Stats")
+    TArray<FCombatStats> StatDeltaPerLevel;
+
+    /** Helper: returns the StatDeltaPerLevel entry for CurrentLevel (zeroed
+     *  FCombatStats if out of range / unset). */
+    FCombatStats GetCurrentStatDelta() const
+    {
+        const int32 Index = FMath::Clamp(CurrentLevel - 1, 0, 2);
+        return StatDeltaPerLevel.IsValidIndex(Index)
+            ? StatDeltaPerLevel[Index]
+            : FCombatStats{};
+    }
+
+    /** Free-text passive effect description (the "unique effect" — modifies
+     *  abilities, damage, etc.). Concrete passive hooks live in a future pass
+     *  — this is the designer-facing label for now. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chip|Effect",
               meta = (MultiLine = "true"))
     FText EffectDescription;

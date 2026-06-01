@@ -5,8 +5,20 @@
 #include "Equipment/CharacterArmorDataAsset.h"
 #include "Equipment/CharacterChipDataAsset.h"
 
-#include "AssetRegistry/AssetRegistryModule.h"
-#include "AssetRegistry/ARFilter.h"
+#include "Equipment/CraftingMaterialDataAsset.h"
+#include "Engine/GameInstance.h"
+#include "Engine/World.h"
+#include "EngineUtils.h"
+
+namespace
+{
+    // Weapon tier-up cost to REACH tier index t: [D,C,B,A,S,S+].
+    const int32 WeaponGold[6] = { 0, 60, 120, 220, 380, 600 };
+    const int32 WeaponMat [6] = { 0,  4,   8,  14,  22,  32 };
+    // Chip / armor level-up cost to REACH level L (2 or 3).
+    const int32 LevelGold[4]  = { 0, 0,  80, 160 };
+    const int32 LevelMat [4]  = { 0, 0,   6,  12 };
+}
 
 // -----------------------------------------------------------------------------
 //  Seeding + HP sync
@@ -41,6 +53,15 @@ void URosterSubsystem::SeedFromParty(const TArray<ACombatantBase*>& Party)
                                                          : EPartyAssignment::Bench;
         ++PartyCount;
 
+        // Everything a member starts with is "owned" (switchable).
+        AddOwnedWeapon(PC->MainWeapon);
+        AddOwnedWeapon(PC->Gun);
+        AddOwnedArmor(PC->Armor);
+        for (const TObjectPtr<UCharacterChipDataAsset>& Chip : PC->Chips)
+        {
+            AddOwnedChip(Chip);
+        }
+
         Members.Add(MoveTemp(Rec));
     }
 
@@ -60,12 +81,103 @@ void URosterSubsystem::RestoreHPToParty(const TArray<ACombatantBase*>& Party)
         const int32 Idx = FindRecordForActor(Base);
         if (Idx == INDEX_NONE) { continue; }
 
+        // Push the record's loadout (which may have been changed via the roster
+        // screen while away) onto the actor, then restore saved HP.
+        if (APlayerCombatant* PC = Cast<APlayerCombatant>(Base))
+        {
+            ApplyRecordToActor(Idx, PC);
+        }
+
         const FPartyMemberRecord& Rec = Members[Idx];
         const float Live = Base->GetCurrentHP();
         const float Want = Rec.CurrentHP;
 
         if (Want > Live)      { Base->RestoreResource(EResourceType::HP, Want - Live); }
         else if (Want < Live) { Base->SpendResource(EResourceType::HP, Live - Want); }
+    }
+}
+
+APlayerCombatant* URosterSubsystem::FindLiveActor(const FPartyMemberRecord& Rec) const
+{
+    UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
+    if (!World || !Rec.CharacterClass) { return nullptr; }
+
+    for (TActorIterator<APlayerCombatant> It(World); It; ++It)
+    {
+        if (*It && (*It)->GetClass() == Rec.CharacterClass) { return *It; }
+    }
+    return nullptr;
+}
+
+void URosterSubsystem::ApplyRecordToActor(int32 Index, APlayerCombatant* Actor)
+{
+    if (!Members.IsValidIndex(Index) || !Actor) { return; }
+    FPartyMemberRecord& Rec = Members[Index];
+
+    Actor->MainWeapon = Rec.MainWeapon;
+    Actor->Gun        = Rec.Gun;
+    Actor->Armor      = Rec.Armor;
+    Actor->Chips      = Rec.Chips;
+
+    // Re-derive the buffed stats (InitializeForBattle re-applies equipment
+    // bonuses; it's HP-persistent so current HP is preserved).
+    Actor->InitializeForBattle();
+
+    Rec.MaxHP    = Actor->GetMaxHP();
+    Rec.Attack   = Actor->GetStatValue(EUpgradeStat::Attack);
+    Rec.Defense  = Actor->GetStatValue(EUpgradeStat::Defense);
+    Rec.Speed    = Actor->GetStatValue(EUpgradeStat::Speed);
+    Rec.CurrentHP = FMath::Min(Rec.CurrentHP, Rec.MaxHP);
+}
+
+// -----------------------------------------------------------------------------
+//  Gear switching
+// -----------------------------------------------------------------------------
+
+void URosterSubsystem::SetMemberMainWeapon(int32 Index, UCharacterWeaponDataAsset* Weapon)
+{
+    if (!Members.IsValidIndex(Index)) { return; }
+    Members[Index].MainWeapon = Weapon;
+    if (APlayerCombatant* Actor = FindLiveActor(Members[Index]))
+    {
+        ApplyRecordToActor(Index, Actor);   // applies + re-derives stats
+    }
+}
+
+void URosterSubsystem::SetMemberGun(int32 Index, UCharacterWeaponDataAsset* Gun)
+{
+    if (!Members.IsValidIndex(Index)) { return; }
+    Members[Index].Gun = Gun;
+    if (APlayerCombatant* Actor = FindLiveActor(Members[Index]))
+    {
+        ApplyRecordToActor(Index, Actor);
+    }
+}
+
+void URosterSubsystem::SetMemberArmor(int32 Index, UCharacterArmorDataAsset* Armor)
+{
+    if (!Members.IsValidIndex(Index)) { return; }
+    Members[Index].Armor = Armor;
+    if (APlayerCombatant* Actor = FindLiveActor(Members[Index]))
+    {
+        ApplyRecordToActor(Index, Actor);
+    }
+}
+
+void URosterSubsystem::SetMemberChip(int32 Index, int32 ChipSlot, UCharacterChipDataAsset* Chip)
+{
+    if (!Members.IsValidIndex(Index) || ChipSlot < 0) { return; }
+
+    FPartyMemberRecord& Rec = Members[Index];
+    if (!Rec.Chips.IsValidIndex(ChipSlot))
+    {
+        Rec.Chips.SetNum(ChipSlot + 1);   // pad with nulls up to this slot
+    }
+    Rec.Chips[ChipSlot] = Chip;
+
+    if (APlayerCombatant* Actor = FindLiveActor(Rec))
+    {
+        ApplyRecordToActor(Index, Actor);
     }
 }
 
@@ -185,37 +297,27 @@ bool URosterSubsystem::UseHealingCharge(const TArray<ACombatantBase*>& LiveParty
 }
 
 // -----------------------------------------------------------------------------
-//  Inventory discovery
+//  Owned inventory
 // -----------------------------------------------------------------------------
 
-template <typename T>
-void URosterSubsystem::LoadAllAssetsOfClass(TArray<T*>& Out) const
+void URosterSubsystem::AddOwnedWeapon(UCharacterWeaponDataAsset* W)
 {
-    Out.Reset();
-    FAssetRegistryModule& ARM =
-        FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
-
-    FARFilter Filter;
-    Filter.ClassPaths.Add(T::StaticClass()->GetClassPathName());
-    Filter.bRecursiveClasses = true;
-
-    TArray<FAssetData> Assets;
-    ARM.Get().GetAssets(Filter, Assets);
-
-    for (const FAssetData& Data : Assets)
-    {
-        if (T* Loaded = Cast<T>(Data.GetAsset())) { Out.Add(Loaded); }
-    }
+    if (W) { OwnedWeapons.AddUnique(W); }
+}
+void URosterSubsystem::AddOwnedArmor(UCharacterArmorDataAsset* A)
+{
+    if (A) { OwnedArmors.AddUnique(A); }
+}
+void URosterSubsystem::AddOwnedChip(UCharacterChipDataAsset* C)
+{
+    if (C) { OwnedChips.AddUnique(C); }
 }
 
 void URosterSubsystem::GetAvailableWeapons(UClass* CharacterClass, bool bGun,
                                            TArray<UCharacterWeaponDataAsset*>& Out) const
 {
     Out.Reset();
-    TArray<UCharacterWeaponDataAsset*> All;
-    LoadAllAssetsOfClass<UCharacterWeaponDataAsset>(All);
-
-    for (UCharacterWeaponDataAsset* W : All)
+    for (const TObjectPtr<UCharacterWeaponDataAsset>& W : OwnedWeapons)
     {
         if (!W || W->bIsGun != bGun) { continue; }
         if (W->OwnerCharacterClass && CharacterClass &&
@@ -239,10 +341,133 @@ void URosterSubsystem::GetAvailableGuns(UClass* CharacterClass, TArray<UCharacte
 
 void URosterSubsystem::GetAvailableArmors(TArray<UCharacterArmorDataAsset*>& Out) const
 {
-    LoadAllAssetsOfClass<UCharacterArmorDataAsset>(Out);
+    Out.Reset();
+    for (const TObjectPtr<UCharacterArmorDataAsset>& A : OwnedArmors) { if (A) Out.Add(A); }
 }
 
 void URosterSubsystem::GetAvailableChips(TArray<UCharacterChipDataAsset*>& Out) const
 {
-    LoadAllAssetsOfClass<UCharacterChipDataAsset>(Out);
+    Out.Reset();
+    for (const TObjectPtr<UCharacterChipDataAsset>& C : OwnedChips) { if (C) Out.Add(C); }
+}
+
+// -----------------------------------------------------------------------------
+//  Economy
+// -----------------------------------------------------------------------------
+
+void URosterSubsystem::SetPrimaryMaterial(UCraftingMaterialDataAsset* Material)
+{
+    PrimaryMaterial = Material;
+    if (Material && !Materials.Contains(Material)) { Materials.Add(Material, 0); }
+}
+
+void URosterSubsystem::AddMaterial(UCraftingMaterialDataAsset* Material, int32 Amount)
+{
+    if (!Material || Amount == 0) { return; }
+    int32& Count = Materials.FindOrAdd(Material);
+    Count = FMath::Max(0, Count + Amount);
+    if (!PrimaryMaterial) { PrimaryMaterial = Material; }
+}
+
+int32 URosterSubsystem::GetMaterialCount(UCraftingMaterialDataAsset* Material) const
+{
+    if (!Material) { return 0; }
+    const int32* Found = Materials.Find(Material);
+    return Found ? *Found : 0;
+}
+
+void URosterSubsystem::RefreshAllMembers()
+{
+    for (int32 i = 0; i < Members.Num(); ++i)
+    {
+        if (APlayerCombatant* Actor = FindLiveActor(Members[i]))
+        {
+            ApplyRecordToActor(i, Actor);
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+//  Upgrades
+// -----------------------------------------------------------------------------
+
+bool URosterSubsystem::GetWeaponUpgradeInfo(UCharacterWeaponDataAsset* W, int32& OutGold, int32& OutMaterial, bool& bOutMaxed) const
+{
+    OutGold = OutMaterial = 0;
+    bOutMaxed = false;
+    if (!W) { return false; }
+
+    const int32 Cur = static_cast<int32>(W->CurrentTier);
+    const int32 Max = W->bIsGun ? 4 : 5;   // gun caps at S, main at S+
+    if (Cur >= Max) { bOutMaxed = true; return true; }
+
+    const int32 Target = Cur + 1;
+    OutGold     = WeaponGold[Target];
+    OutMaterial = WeaponMat[Target];
+    return true;
+}
+
+bool URosterSubsystem::TryUpgradeWeapon(UCharacterWeaponDataAsset* W)
+{
+    int32 NeedGold, NeedMat; bool bMaxed;
+    if (!GetWeaponUpgradeInfo(W, NeedGold, NeedMat, bMaxed) || bMaxed) { return false; }
+    if (Gold < NeedGold || GetMaterialCount(PrimaryMaterial) < NeedMat) { return false; }
+
+    Gold -= NeedGold;
+    if (PrimaryMaterial) { Materials.FindOrAdd(PrimaryMaterial) -= NeedMat; }
+    W->CurrentTier = static_cast<EWeaponTier>(static_cast<int32>(W->CurrentTier) + 1);
+    RefreshAllMembers();
+    return true;
+}
+
+bool URosterSubsystem::GetChipUpgradeInfo(UCharacterChipDataAsset* C, int32& OutGold, int32& OutMaterial, bool& bOutMaxed) const
+{
+    OutGold = OutMaterial = 0;
+    bOutMaxed = false;
+    if (!C) { return false; }
+    if (C->CurrentLevel >= 3) { bOutMaxed = true; return true; }
+
+    const int32 Target = C->CurrentLevel + 1;
+    OutGold     = LevelGold[Target];
+    OutMaterial = LevelMat[Target];
+    return true;
+}
+
+bool URosterSubsystem::TryUpgradeChip(UCharacterChipDataAsset* C)
+{
+    int32 NeedGold, NeedMat; bool bMaxed;
+    if (!GetChipUpgradeInfo(C, NeedGold, NeedMat, bMaxed) || bMaxed) { return false; }
+    if (Gold < NeedGold || GetMaterialCount(PrimaryMaterial) < NeedMat) { return false; }
+
+    Gold -= NeedGold;
+    if (PrimaryMaterial) { Materials.FindOrAdd(PrimaryMaterial) -= NeedMat; }
+    ++C->CurrentLevel;
+    RefreshAllMembers();
+    return true;
+}
+
+bool URosterSubsystem::GetArmorUpgradeInfo(UCharacterArmorDataAsset* A, int32& OutGold, int32& OutMaterial, bool& bOutMaxed) const
+{
+    OutGold = OutMaterial = 0;
+    bOutMaxed = false;
+    if (!A) { return false; }
+    if (A->CurrentLevel >= 3) { bOutMaxed = true; return true; }
+
+    const int32 Target = A->CurrentLevel + 1;
+    OutGold     = LevelGold[Target];
+    OutMaterial = LevelMat[Target];
+    return true;
+}
+
+bool URosterSubsystem::TryUpgradeArmor(UCharacterArmorDataAsset* A)
+{
+    int32 NeedGold, NeedMat; bool bMaxed;
+    if (!GetArmorUpgradeInfo(A, NeedGold, NeedMat, bMaxed) || bMaxed) { return false; }
+    if (Gold < NeedGold || GetMaterialCount(PrimaryMaterial) < NeedMat) { return false; }
+
+    Gold -= NeedGold;
+    if (PrimaryMaterial) { Materials.FindOrAdd(PrimaryMaterial) -= NeedMat; }
+    ++A->CurrentLevel;
+    RefreshAllMembers();
+    return true;
 }

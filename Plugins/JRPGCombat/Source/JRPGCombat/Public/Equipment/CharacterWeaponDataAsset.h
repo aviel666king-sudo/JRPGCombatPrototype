@@ -121,6 +121,21 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Tier")
     TArray<float> BuffValuePerTier;
 
+    /** Passive unlocked at each tier (descriptive text for now — the system
+     *  that makes passives fire in combat is a later phase). Index by
+     *  EWeaponTier: [0]=D … [5]=S+. Leave an entry empty for "no new passive at
+     *  this tier". The roster screen lists every passive up to CurrentTier. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Tier",
+              meta = (MultiLine = "true"))
+    TArray<FText> PassiveDescriptionPerTier;
+
+    /** Helper: passive text for a given tier index, or empty. */
+    FText GetPassiveForTier(int32 TierIndex) const
+    {
+        return PassiveDescriptionPerTier.IsValidIndex(TierIndex)
+            ? PassiveDescriptionPerTier[TierIndex] : FText::GetEmpty();
+    }
+
     /** Helper: returns the BuffValuePerTier entry for CurrentTier (0 if out of
      *  range / unset). */
     float GetCurrentBuffValue() const

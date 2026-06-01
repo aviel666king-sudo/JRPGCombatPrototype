@@ -42,9 +42,28 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Armor|Identity")
     TObjectPtr<USkeletalMesh> VisualMesh;
 
-    /** Base stat delta. The socketed armor chip stacks on top of this. */
+    /** Base stat delta, used when no per-level data is authored. The socketed
+     *  armor chip stacks on top of this. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Armor|Stats")
     FCombatStats StatDelta;
+
+    /** Current armor level (1..3), raised at camp with gold + materials. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Armor|Stats",
+              meta = (ClampMin = "1", ClampMax = "3"))
+    int32 CurrentLevel = 1;
+
+    /** Per-level stat delta. Index 0 = L1, 1 = L2, 2 = L3. If empty, the single
+     *  StatDelta above is used at all levels. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Armor|Stats")
+    TArray<FCombatStats> StatDeltaPerLevel;
+
+    /** Stat delta for the current level (falls back to StatDelta when no
+     *  per-level data is authored). */
+    FCombatStats GetCurrentStatDelta() const
+    {
+        const int32 Index = FMath::Clamp(CurrentLevel - 1, 0, 2);
+        return StatDeltaPerLevel.IsValidIndex(Index) ? StatDeltaPerLevel[Index] : StatDelta;
+    }
 
     /** Armor chip socket — independent of the wearer's 3 character chips.
      *  The chip is BOUND TO THIS ARMOR: when the player swaps armor, the chip

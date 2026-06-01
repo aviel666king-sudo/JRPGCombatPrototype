@@ -218,6 +218,10 @@ void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
         {
             EIC->BindAction(FastTravelAction, ETriggerEvent::Started, this, &AExplorationPawn::HandleOpenFastTravel);
         }
+        if (UpgradeAction)
+        {
+            EIC->BindAction(UpgradeAction, ETriggerEvent::Started, this, &AExplorationPawn::HandleUpgradeAtCamp);
+        }
     }
 
     // Direct-key fallback for crouch — binds the C key on the raw input
@@ -298,6 +302,11 @@ void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
     {
         PlayerInputComponent->BindKey(EKeys::G, IE_Pressed, this, &AExplorationPawn::HandleOpenFastTravel);
         UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Fast travel bound to G key via direct fallback (no IA_FastTravel assigned)"));
+    }
+    if (PlayerInputComponent && !UpgradeAction)
+    {
+        PlayerInputComponent->BindKey(EKeys::U, IE_Pressed, this, &AExplorationPawn::HandleUpgradeAtCamp);
+        UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Upgrade bound to U key via direct fallback (no IA_Upgrade assigned)"));
     }
 }
 
@@ -891,7 +900,32 @@ void AExplorationPawn::HandleToggleRoster()
     else             { OpenRoster(); }
 }
 
-void AExplorationPawn::OpenRoster()
+void AExplorationPawn::HandleUpgradeAtCamp()
+{
+    if (bIsAssassinating || bIsCastingCone || bShopOpen || bSkillTreeOpen || bRosterOpen || bFastTravelOpen) { return; }
+
+    // Only at the camp's checkpoint.
+    bool bAtCamp = false;
+    if (UWorld* World = GetWorld())
+    {
+        for (TActorIterator<ACheckpoint> It(World); It; ++It)
+        {
+            if (*It && (*It)->IsPlayerInRange() && (*It)->bIsCampCheckpoint) { bAtCamp = true; break; }
+        }
+    }
+    if (!bAtCamp)
+    {
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Yellow,
+                TEXT("Upgrade gear at the Camp checkpoint"));
+        }
+        return;
+    }
+    OpenRoster(/*bUpgrade=*/true);
+}
+
+void AExplorationPawn::OpenRoster(bool bUpgrade)
 {
     if (bRosterOpen || bIsAssassinating || bIsCastingCone) { return; }
 
@@ -906,6 +940,7 @@ void AExplorationPawn::OpenRoster()
     RosterWidget = CreateWidget<URosterWidget>(PC, WidgetClass);
     if (!RosterWidget) { return; }
 
+    RosterWidget->bUpgradeMode = bUpgrade;
     RosterWidget->OnCloseRequested = [this]() { CloseRoster(); };
     RosterWidget->AddToViewport(50);
     bRosterOpen = true;

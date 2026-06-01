@@ -10,6 +10,7 @@ class ACombatantBase;
 class UCharacterWeaponDataAsset;
 class UCharacterArmorDataAsset;
 class UCharacterChipDataAsset;
+class UCraftingMaterialDataAsset;
 
 /** Which party a character is slotted into. Bench = owned but not deployed. */
 UENUM(BlueprintType)
@@ -141,6 +142,17 @@ public:
     int32 CountInParty(EPartyAssignment Party) const;
 
     // -------------------------------------------------------------------------
+    //  Gear switching — updates the record, the live actor (if present), and
+    //  re-derives the record's stats. Loadout persists across levels (restored
+    //  onto actors on level entry, alongside HP).
+    // -------------------------------------------------------------------------
+
+    void SetMemberMainWeapon(int32 Index, UCharacterWeaponDataAsset* Weapon);
+    void SetMemberGun(int32 Index, UCharacterWeaponDataAsset* Gun);
+    void SetMemberArmor(int32 Index, UCharacterArmorDataAsset* Armor);
+    void SetMemberChip(int32 Index, int32 ChipSlot, UCharacterChipDataAsset* Chip);
+
+    // -------------------------------------------------------------------------
     //  Heal-charge pool (shared across the party, persists across levels)
     // -------------------------------------------------------------------------
 
@@ -161,13 +173,47 @@ public:
     bool UseHealingCharge(const TArray<ACombatantBase*>& LiveParty);
 
     // -------------------------------------------------------------------------
-    //  Inventory discovery (used by the gear-switch UI — Part 2)
+    //  Owned inventory — the gear-switch UI offers only items the player owns.
+    //  Seeded with each member's equipped + starting items; grown by drops.
     // -------------------------------------------------------------------------
 
     void GetAvailableMainWeapons(UClass* CharacterClass, TArray<UCharacterWeaponDataAsset*>& Out) const;
     void GetAvailableGuns(UClass* CharacterClass, TArray<UCharacterWeaponDataAsset*>& Out) const;
     void GetAvailableArmors(TArray<UCharacterArmorDataAsset*>& Out) const;
     void GetAvailableChips(TArray<UCharacterChipDataAsset*>& Out) const;
+
+    void AddOwnedWeapon(UCharacterWeaponDataAsset* W);
+    void AddOwnedArmor(UCharacterArmorDataAsset* A);
+    void AddOwnedChip(UCharacterChipDataAsset* C);
+
+    // -------------------------------------------------------------------------
+    //  Economy — gold + materials (persist across levels), grown by enemy drops.
+    // -------------------------------------------------------------------------
+
+    int32 GetGold() const { return Gold; }
+    void  AddGold(int32 Amount) { Gold = FMath::Max(0, Gold + Amount); }
+
+    /** The single "primary" upgrade material (Metal Scraps). Set by the game
+     *  mode from its DefaultDropMaterial so the upgrade UI can name + count it. */
+    void SetPrimaryMaterial(UCraftingMaterialDataAsset* Material);
+    UCraftingMaterialDataAsset* GetPrimaryMaterial() const { return PrimaryMaterial; }
+
+    void  AddMaterial(UCraftingMaterialDataAsset* Material, int32 Amount);
+    int32 GetMaterialCount(UCraftingMaterialDataAsset* Material) const;
+
+    // -------------------------------------------------------------------------
+    //  Upgrades (camp only) — spend gold + primary material to raise tier/level.
+    //  Cost queries fill OutGold / OutMaterial and set bOutMaxed when already at
+    //  the cap. Try* perform the spend + the increment and re-stat the party.
+    // -------------------------------------------------------------------------
+
+    bool GetWeaponUpgradeInfo(UCharacterWeaponDataAsset* W, int32& OutGold, int32& OutMaterial, bool& bOutMaxed) const;
+    bool GetChipUpgradeInfo(UCharacterChipDataAsset* C, int32& OutGold, int32& OutMaterial, bool& bOutMaxed) const;
+    bool GetArmorUpgradeInfo(UCharacterArmorDataAsset* A, int32& OutGold, int32& OutMaterial, bool& bOutMaxed) const;
+
+    bool TryUpgradeWeapon(UCharacterWeaponDataAsset* W);
+    bool TryUpgradeChip(UCharacterChipDataAsset* C);
+    bool TryUpgradeArmor(UCharacterArmorDataAsset* A);
 
 private:
 
@@ -180,11 +226,38 @@ private:
     int32 ReviveCharges = 0, MaxReviveCharges = 1;
     int32 APCharges = 0,     MaxAPCharges = 2;
 
+    UPROPERTY()
+    int32 Gold = 0;
+
+    UPROPERTY()
+    TObjectPtr<UCraftingMaterialDataAsset> PrimaryMaterial;
+
+    UPROPERTY()
+    TMap<TObjectPtr<UCraftingMaterialDataAsset>, int32> Materials;
+
+    UPROPERTY()
+    TArray<TObjectPtr<UCharacterWeaponDataAsset>> OwnedWeapons;
+
+    UPROPERTY()
+    TArray<TObjectPtr<UCharacterArmorDataAsset>> OwnedArmors;
+
+    UPROPERTY()
+    TArray<TObjectPtr<UCharacterChipDataAsset>> OwnedChips;
+
+    /** Re-apply every record onto its live actor (re-stat after an upgrade). */
+    void RefreshAllMembers();
+
     /** Find the record index whose class matches the actor's class, or INDEX_NONE. */
     int32 FindRecordForActor(const ACombatantBase* Actor) const;
 
-    template <typename T>
-    void LoadAllAssetsOfClass(TArray<T*>& Out) const;
+    /** Find the live placed actor matching a record's class in the current
+     *  world, or null (e.g. in the Open World / Camp). */
+    APlayerCombatant* FindLiveActor(const FPartyMemberRecord& Rec) const;
+
+    /** Push a record's loadout onto a live actor, re-initialise it, and copy the
+     *  resulting stats back into the record. Used after a gear switch and on
+     *  level entry. */
+    void ApplyRecordToActor(int32 Index, APlayerCombatant* Actor);
 
     void GetAvailableWeapons(UClass* CharacterClass, bool bGun, TArray<UCharacterWeaponDataAsset*>& Out) const;
 };

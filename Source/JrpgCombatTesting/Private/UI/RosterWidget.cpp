@@ -18,6 +18,7 @@
 #include "Equipment/CharacterWeaponDataAsset.h"
 #include "Equipment/CharacterArmorDataAsset.h"
 #include "Equipment/CharacterChipDataAsset.h"
+#include "Equipment/CraftingMaterialDataAsset.h"
 #include "Roster/RosterSubsystem.h"
 #include "Exploration/JrpgGameMode.h"
 #include "Kismet/GameplayStatics.h"
@@ -32,6 +33,7 @@ namespace
     const FLinearColor ColBtn      (0.12f,  0.18f,  0.28f,  1.0f);
     const FLinearColor ColText     (0.92f,  0.94f,  0.98f,  1.0f);
     const FLinearColor ColSubtle   (0.62f,  0.66f,  0.72f,  1.0f);
+    const FLinearColor ColPassive  (0.70f,  0.85f,  0.55f,  1.0f);
 
     FLinearColor AssignmentColour(EPartyAssignment A)
     {
@@ -50,10 +52,7 @@ namespace
 
 void URosterActionButton::HandleClicked()
 {
-    if (OnActionClicked)
-    {
-        OnActionClicked(MemberIndex, Action);
-    }
+    if (OnActionClicked) { OnActionClicked(this); }
 }
 
 // -----------------------------------------------------------------------------
@@ -96,6 +95,22 @@ URosterSubsystem* URosterWidget::GetRoster() const
     return GI ? GI->GetSubsystem<URosterSubsystem>() : nullptr;
 }
 
+URosterActionButton* URosterWidget::MakeButton(const TCHAR* Label, ERosterAction Action, const FLinearColor& BG)
+{
+    URosterActionButton* Btn = WidgetTree->ConstructWidget<URosterActionButton>(URosterActionButton::StaticClass());
+    Btn->SetBackgroundColor(BG);
+    Btn->Action = Action;
+    Btn->OnActionClicked = [this](URosterActionButton* B) { HandleButton(B); };
+    Btn->OnClicked.AddDynamic(Btn, &URosterActionButton::HandleClicked);
+
+    UTextBlock* Lbl = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+    Lbl->SetText(FText::FromString(Label));
+    Lbl->SetFont(MakeFont(13, true));
+    Lbl->SetColorAndOpacity(FSlateColor(ColText));
+    Btn->SetContent(Lbl);
+    return Btn;
+}
+
 // -----------------------------------------------------------------------------
 //  Build root
 // -----------------------------------------------------------------------------
@@ -132,7 +147,6 @@ TSharedRef<SWidget> URosterWidget::RebuildWidget()
         LS->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 
         UHorizontalBox* Footer = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-
         PartyCountText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
         PartyCountText->SetFont(MakeFont(16, false));
         PartyCountText->SetColorAndOpacity(FSlateColor(ColSubtle));
@@ -140,16 +154,7 @@ TSharedRef<SWidget> URosterWidget::RebuildWidget()
         PCS->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
         PCS->SetVerticalAlignment(VAlign_Center);
 
-        URosterActionButton* Close = WidgetTree->ConstructWidget<URosterActionButton>(URosterActionButton::StaticClass());
-        Close->SetBackgroundColor(ColBtn);
-        Close->Action = ERosterAction::Close;
-        Close->OnActionClicked = [this](int32 I, ERosterAction A) { HandleAction(I, A); };
-        Close->OnClicked.AddDynamic(Close, &URosterActionButton::HandleClicked);
-        UTextBlock* CloseLbl = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
-        CloseLbl->SetText(FText::FromString(TEXT("Close  (Tab / Esc)")));
-        CloseLbl->SetFont(MakeFont(15, true));
-        CloseLbl->SetColorAndOpacity(FSlateColor(ColText));
-        Close->SetContent(CloseLbl);
+        URosterActionButton* Close = MakeButton(TEXT("Close  (Tab / Esc)"), ERosterAction::Close, ColBtn);
         Footer->AddChildToHorizontalBox(Close);
 
         UVerticalBoxSlot* FS = Page->AddChildToVerticalBox(Footer);
@@ -162,16 +167,7 @@ TSharedRef<SWidget> URosterWidget::RebuildWidget()
     {
         UVerticalBox* Page = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("DetailPage"));
 
-        URosterActionButton* Back = WidgetTree->ConstructWidget<URosterActionButton>(URosterActionButton::StaticClass());
-        Back->SetBackgroundColor(ColBtn);
-        Back->Action = ERosterAction::BackToRoster;
-        Back->OnActionClicked = [this](int32 I, ERosterAction A) { HandleAction(I, A); };
-        Back->OnClicked.AddDynamic(Back, &URosterActionButton::HandleClicked);
-        UTextBlock* BackLbl = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
-        BackLbl->SetText(FText::FromString(TEXT("Back to Roster")));
-        BackLbl->SetFont(MakeFont(15, true));
-        BackLbl->SetColorAndOpacity(FSlateColor(ColText));
-        Back->SetContent(BackLbl);
+        URosterActionButton* Back = MakeButton(TEXT("Back to Roster"), ERosterAction::BackToRoster, ColBtn);
         UVerticalBoxSlot* BS = Page->AddChildToVerticalBox(Back);
         BS->SetHorizontalAlignment(HAlign_Left);
         BS->SetPadding(FMargin(0.f, 0.f, 0.f, 16.f));
@@ -183,6 +179,22 @@ TSharedRef<SWidget> URosterWidget::RebuildWidget()
         Switcher->AddChild(Page);
     }
 
+    // ---- Page 2: Switch ----
+    {
+        UVerticalBox* Page = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("SwitchPage"));
+
+        URosterActionButton* Back = MakeButton(TEXT("Back"), ERosterAction::BackToDetail, ColBtn);
+        UVerticalBoxSlot* BS = Page->AddChildToVerticalBox(Back);
+        BS->SetHorizontalAlignment(HAlign_Left);
+        BS->SetPadding(FMargin(0.f, 0.f, 0.f, 16.f));
+
+        SwitchBox = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("SwitchBox"));
+        UVerticalBoxSlot* SS = Page->AddChildToVerticalBox(SwitchBox);
+        SS->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+
+        Switcher->AddChild(Page);
+    }
+
     return Super::RebuildWidget();
 }
 
@@ -190,9 +202,6 @@ void URosterWidget::NativeConstruct()
 {
     Super::NativeConstruct();
 
-    // If this level has live party actors (a combat level), sync their current
-    // HP into the records first so the roster shows post-combat HP, not the
-    // seed-time values.
     if (URosterSubsystem* R = GetRoster())
     {
         if (AJrpgGameMode* GM = Cast<AJrpgGameMode>(UGameplayStatics::GetGameMode(this)))
@@ -210,11 +219,9 @@ FReply URosterWidget::NativeOnKeyDown(const FGeometry& Geo, const FKeyEvent& Key
     const FKey K = Key.GetKey();
     if (K == EKeys::Escape || K == EKeys::Tab)
     {
-        if (Switcher && Switcher->GetActiveWidgetIndex() == 1)
-        {
-            Switcher->SetActiveWidgetIndex(0);
-            return FReply::Handled();
-        }
+        const int32 Page = Switcher ? Switcher->GetActiveWidgetIndex() : 0;
+        if (Page == 2)      { ShowDetail(CurrentMemberIndex); return FReply::Handled(); }
+        if (Page == 1)      { Switcher->SetActiveWidgetIndex(0); RefreshRoster(); return FReply::Handled(); }
         if (OnCloseRequested) { OnCloseRequested(); }
         return FReply::Handled();
     }
@@ -276,7 +283,6 @@ UBorder* URosterWidget::BuildCharacterCard(int32 MemberIndex)
     UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
     Card->SetContent(Row);
 
-    // Identity
     UVerticalBox* Info = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
 
     UTextBlock* Name = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
@@ -297,13 +303,11 @@ UBorder* URosterWidget::BuildCharacterCard(int32 MemberIndex)
     InfoSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
     InfoSlot->SetVerticalAlignment(VAlign_Center);
 
-    // Party tag
-    const EPartyAssignment Assignment = Rec.Assignment;
     UBorder* Tag = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
-    Tag->SetBrushColor(AssignmentColour(Assignment));
+    Tag->SetBrushColor(AssignmentColour(Rec.Assignment));
     Tag->SetPadding(FMargin(10.f, 4.f));
     UTextBlock* TagText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
-    TagText->SetText(AssignmentLabel(Assignment));
+    TagText->SetText(AssignmentLabel(Rec.Assignment));
     TagText->SetFont(MakeFont(13, true));
     TagText->SetColorAndOpacity(FSlateColor(FLinearColor::Black));
     Tag->SetContent(TagText);
@@ -311,34 +315,18 @@ UBorder* URosterWidget::BuildCharacterCard(int32 MemberIndex)
     TagSlot->SetVerticalAlignment(VAlign_Center);
     TagSlot->SetPadding(FMargin(0.f, 0.f, 14.f, 0.f));
 
-    // Action buttons
-    auto MakeBtn = [this, MemberIndex](const TCHAR* Label, ERosterAction Action, const FLinearColor& BG)
+    auto AddCardBtn = [&](const TCHAR* Label, ERosterAction Action, const FLinearColor& BG)
     {
-        URosterActionButton* Btn = WidgetTree->ConstructWidget<URosterActionButton>(URosterActionButton::StaticClass());
-        Btn->SetBackgroundColor(BG);
+        URosterActionButton* Btn = MakeButton(Label, Action, BG);
         Btn->MemberIndex = MemberIndex;
-        Btn->Action = Action;
-        Btn->OnActionClicked = [this](int32 I, ERosterAction A) { HandleAction(I, A); };
-        Btn->OnClicked.AddDynamic(Btn, &URosterActionButton::HandleClicked);
-        UTextBlock* Lbl = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
-        Lbl->SetText(FText::FromString(Label));
-        Lbl->SetFont(MakeFont(13, true));
-        Lbl->SetColorAndOpacity(FSlateColor(ColText));
-        Btn->SetContent(Lbl);
-        return Btn;
-    };
-
-    URosterActionButton* B1 = MakeBtn(TEXT("P1"),      ERosterAction::AssignParty1, ColParty1 * 0.5f);
-    URosterActionButton* B2 = MakeBtn(TEXT("P2"),      ERosterAction::AssignParty2, ColParty2 * 0.5f);
-    URosterActionButton* BB = MakeBtn(TEXT("Bench"),   ERosterAction::AssignBench,  ColBtn);
-    URosterActionButton* BD = MakeBtn(TEXT("Details"), ERosterAction::OpenDetails,  ColBtn);
-
-    for (URosterActionButton* B : { B1, B2, BB, BD })
-    {
-        UHorizontalBoxSlot* BS = Row->AddChildToHorizontalBox(B);
+        UHorizontalBoxSlot* BS = Row->AddChildToHorizontalBox(Btn);
         BS->SetPadding(FMargin(3.f, 0.f));
         BS->SetVerticalAlignment(VAlign_Center);
-    }
+    };
+    AddCardBtn(TEXT("P1"),      ERosterAction::AssignParty1, ColParty1 * 0.5f);
+    AddCardBtn(TEXT("P2"),      ERosterAction::AssignParty2, ColParty2 * 0.5f);
+    AddCardBtn(TEXT("Bench"),   ERosterAction::AssignBench,  ColBtn);
+    AddCardBtn(TEXT("Details"), ERosterAction::OpenDetails,  ColBtn);
 
     return Card;
 }
@@ -352,6 +340,7 @@ void URosterWidget::ShowDetail(int32 MemberIndex)
     URosterSubsystem* R = GetRoster();
     if (!DetailBox || !R || !R->IsValidMember(MemberIndex)) { return; }
 
+    CurrentMemberIndex = MemberIndex;
     const FPartyMemberRecord& Rec = R->GetMember(MemberIndex);
     DetailBox->ClearChildren();
     AddDetailHeader(Rec);
@@ -376,14 +365,18 @@ void URosterWidget::AddDetailHeader(const FPartyMemberRecord& Rec)
     Lv->SetColorAndOpacity(FSlateColor(ColSubtle));
     DetailBox->AddChildToVerticalBox(Lv);
 
-    if (!Rec.Tagline.IsEmpty())
+    if (bUpgradeMode)
     {
-        UTextBlock* Tag = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
-        Tag->SetText(Rec.Tagline);
-        Tag->SetFont(MakeFont(13, false));
-        Tag->SetColorAndOpacity(FSlateColor(ColSubtle));
-        UVerticalBoxSlot* S = DetailBox->AddChildToVerticalBox(Tag);
-        S->SetPadding(FMargin(0.f, 2.f, 0.f, 0.f));
+        URosterSubsystem* R = GetRoster();
+        const FString MatName = (R && R->GetPrimaryMaterial())
+            ? R->GetPrimaryMaterial()->DisplayName.ToString() : FString(TEXT("Material"));
+        UTextBlock* Econ = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+        Econ->SetText(FText::FromString(FString::Printf(TEXT("Gold %d      %s %d        (Upgrade Gear)"),
+            R ? R->GetGold() : 0, *MatName, R ? R->GetMaterialCount(R->GetPrimaryMaterial()) : 0)));
+        Econ->SetFont(MakeFont(15, true));
+        Econ->SetColorAndOpacity(FSlateColor(ColParty2));
+        UVerticalBoxSlot* ES = DetailBox->AddChildToVerticalBox(Econ);
+        ES->SetPadding(FMargin(0.f, 4.f, 0.f, 0.f));
     }
 }
 
@@ -404,88 +397,237 @@ void URosterWidget::AddStatsBlock(const FPartyMemberRecord& Rec)
         T->SetColorAndOpacity(FSlateColor(ColText));
         DetailBox->AddChildToVerticalBox(T);
     };
-
     AddLine(FString::Printf(TEXT("Max HP     %.0f"), Rec.MaxHP));
     AddLine(FString::Printf(TEXT("Attack     %.0f"), Rec.Attack));
     AddLine(FString::Printf(TEXT("Defense    %.0f"), Rec.Defense));
     AddLine(FString::Printf(TEXT("Speed      %.0f"), Rec.Speed));
 }
 
+void URosterWidget::AddLoadoutRow(const FString& Label, const FString& Value,
+                                  ESwitchSlot TargetSlot, int32 ChipSlot)
+{
+    UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+
+    UTextBlock* T = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+    T->SetText(FText::FromString(FString::Printf(TEXT("%-14s %s"), *Label, *Value)));
+    T->SetFont(MakeFont(15, false));
+    T->SetColorAndOpacity(FSlateColor(ColText));
+    UHorizontalBoxSlot* TS = Row->AddChildToHorizontalBox(T);
+    TS->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+    TS->SetVerticalAlignment(VAlign_Center);
+
+    URosterActionButton* Change = MakeButton(TEXT("Change"), ERosterAction::OpenSwitch, ColBtn);
+    Change->MemberIndex = CurrentMemberIndex;
+    Change->SwitchSlot = TargetSlot;
+    Change->SlotIndex = ChipSlot;
+    UHorizontalBoxSlot* CS = Row->AddChildToHorizontalBox(Change);
+    CS->SetVerticalAlignment(VAlign_Center);
+
+    // Upgrade button (camp only). Resolve the equipped item + its cost.
+    if (bUpgradeMode)
+    {
+        URosterSubsystem* R = GetRoster();
+        FString UpLabel = TEXT("—");
+        bool bClickable = false;
+        if (R && R->IsValidMember(CurrentMemberIndex))
+        {
+            const FPartyMemberRecord& Rec = R->GetMember(CurrentMemberIndex);
+            int32 NeedGold = 0, NeedMat = 0; bool bMaxed = false, bHave = false;
+            if (TargetSlot == ESwitchSlot::MainWeapon && Rec.MainWeapon)
+            { bHave = R->GetWeaponUpgradeInfo(Rec.MainWeapon, NeedGold, NeedMat, bMaxed); }
+            else if (TargetSlot == ESwitchSlot::Gun && Rec.Gun)
+            { bHave = R->GetWeaponUpgradeInfo(Rec.Gun, NeedGold, NeedMat, bMaxed); }
+            else if (TargetSlot == ESwitchSlot::Armor && Rec.Armor)
+            { bHave = R->GetArmorUpgradeInfo(Rec.Armor, NeedGold, NeedMat, bMaxed); }
+            else if (TargetSlot == ESwitchSlot::Chip && Rec.Chips.IsValidIndex(ChipSlot) && Rec.Chips[ChipSlot])
+            { bHave = R->GetChipUpgradeInfo(Rec.Chips[ChipSlot], NeedGold, NeedMat, bMaxed); }
+
+            if (bHave)
+            {
+                if (bMaxed) { UpLabel = TEXT("MAX"); }
+                else        { UpLabel = FString::Printf(TEXT("Up  %dg/%ds"), NeedGold, NeedMat); bClickable = true; }
+            }
+        }
+
+        URosterActionButton* Up = MakeButton(*UpLabel, ERosterAction::UpgradeSlot,
+            bClickable ? ColParty2 * 0.6f : ColBtn);
+        Up->MemberIndex = CurrentMemberIndex;
+        Up->SwitchSlot = TargetSlot;
+        Up->SlotIndex = ChipSlot;
+        UHorizontalBoxSlot* US = Row->AddChildToHorizontalBox(Up);
+        US->SetVerticalAlignment(VAlign_Center);
+        US->SetPadding(FMargin(4.f, 0.f, 0.f, 0.f));
+    }
+
+    UVerticalBoxSlot* RS = DetailBox->AddChildToVerticalBox(Row);
+    RS->SetPadding(FMargin(0.f, 2.f));
+}
+
 void URosterWidget::AddLoadoutBlock(const FPartyMemberRecord& Rec)
 {
     UTextBlock* Hdr = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
-    Hdr->SetText(FText::FromString(TEXT("Loadout")));
+    Hdr->SetText(FText::FromString(TEXT("Loadout  (switch any slot)")));
     Hdr->SetFont(MakeFont(18, true));
     Hdr->SetColorAndOpacity(FSlateColor(ColParty1));
     UVerticalBoxSlot* HS = DetailBox->AddChildToVerticalBox(Hdr);
     HS->SetPadding(FMargin(0.f, 18.f, 0.f, 6.f));
 
-    auto AddLine = [this](const FString& Label, const FString& Value)
+    auto WeaponValue = [this](UCharacterWeaponDataAsset* W) -> FString
     {
-        UTextBlock* T = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
-        T->SetText(FText::FromString(FString::Printf(TEXT("%-14s %s"), *Label, *Value)));
-        T->SetFont(MakeFont(15, false));
-        T->SetColorAndOpacity(FSlateColor(ColText));
-        DetailBox->AddChildToVerticalBox(T);
+        return W ? FString::Printf(TEXT("%s  [Tier %s]  +%.0f %s"),
+            *W->DisplayName.ToString(), WeaponTierName(static_cast<uint8>(W->CurrentTier)),
+            W->GetCurrentBuffValue(), BuffedStatName(static_cast<uint8>(W->BuffedStat)))
+            : FString(TEXT("(empty)"));
     };
 
-    if (UCharacterWeaponDataAsset* W = Rec.MainWeapon)
+    auto AddPassives = [this](UCharacterWeaponDataAsset* W)
     {
-        AddLine(TEXT("Main Weapon"), FString::Printf(TEXT("%s  [Tier %s]  +%.0f %s"),
-            *W->DisplayName.ToString(), WeaponTierName(static_cast<uint8>(W->CurrentTier)),
-            W->GetCurrentBuffValue(), BuffedStatName(static_cast<uint8>(W->BuffedStat))));
-    }
-    else { AddLine(TEXT("Main Weapon"), TEXT("(empty)")); }
-
-    if (UCharacterWeaponDataAsset* G = Rec.Gun)
-    {
-        AddLine(TEXT("Gun"), FString::Printf(TEXT("%s  [Tier %s]  +%.0f %s"),
-            *G->DisplayName.ToString(), WeaponTierName(static_cast<uint8>(G->CurrentTier)),
-            G->GetCurrentBuffValue(), BuffedStatName(static_cast<uint8>(G->BuffedStat))));
-    }
-    else { AddLine(TEXT("Gun"), TEXT("(empty)")); }
-
-    if (UCharacterArmorDataAsset* A = Rec.Armor)
-    {
-        AddLine(TEXT("Armor"), A->DisplayName.ToString());
-        if (A->SocketedChip)
+        if (!W) { return; }
+        const int32 TierIdx = static_cast<int32>(W->CurrentTier);
+        for (int32 t = 0; t <= TierIdx; ++t)
         {
-            AddLine(TEXT("  Armor Chip"), FString::Printf(TEXT("%s  [L%d]"),
-                *A->SocketedChip->DisplayName.ToString(), A->SocketedChip->CurrentLevel));
+            const FText P = W->GetPassiveForTier(t);
+            if (P.IsEmpty()) { continue; }
+            UTextBlock* PT = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+            PT->SetText(FText::FromString(FString::Printf(TEXT("    %s: %s"),
+                WeaponTierName(static_cast<uint8>(t)), *P.ToString())));
+            PT->SetFont(MakeFont(12, false));
+            PT->SetColorAndOpacity(FSlateColor(ColPassive));
+            DetailBox->AddChildToVerticalBox(PT);
         }
-    }
-    else { AddLine(TEXT("Armor"), TEXT("(empty)")); }
+    };
+
+    AddLoadoutRow(TEXT("Main Weapon"), WeaponValue(Rec.MainWeapon), ESwitchSlot::MainWeapon, -1);
+    AddPassives(Rec.MainWeapon);
+
+    AddLoadoutRow(TEXT("Gun"), WeaponValue(Rec.Gun), ESwitchSlot::Gun, -1);
+    AddPassives(Rec.Gun);
+
+    AddLoadoutRow(TEXT("Armor"),
+        Rec.Armor ? Rec.Armor->DisplayName.ToString() : FString(TEXT("(empty)")),
+        ESwitchSlot::Armor, -1);
 
     for (int32 i = 0; i < APlayerCombatant::MaxChipSlots; ++i)
     {
-        const FString Label = FString::Printf(TEXT("Chip %d"), i + 1);
         UCharacterChipDataAsset* Chip = Rec.Chips.IsValidIndex(i) ? Rec.Chips[i] : nullptr;
-        if (Chip)
-        {
-            AddLine(Label, FString::Printf(TEXT("%s  [L%d]"),
-                *Chip->DisplayName.ToString(), Chip->CurrentLevel));
-        }
-        else { AddLine(Label, TEXT("(empty)")); }
+        const FString Val = Chip
+            ? FString::Printf(TEXT("%s  [L%d]"), *Chip->DisplayName.ToString(), Chip->CurrentLevel)
+            : FString(TEXT("(empty)"));
+        AddLoadoutRow(FString::Printf(TEXT("Chip %d"), i + 1), Val, ESwitchSlot::Chip, i);
     }
 
-    AddLine(TEXT("Skills"), FString::Printf(TEXT("%d / %d equipped"),
-        Rec.EquippedSkillCount, APlayerCombatant::MaxEquippedSkills));
-
-    UTextBlock* Note = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
-    Note->SetText(FText::FromString(TEXT("Gear switching + upgrade requirements: coming next.")));
-    Note->SetFont(MakeFont(12, false));
-    Note->SetColorAndOpacity(FSlateColor(ColSubtle));
-    UVerticalBoxSlot* NS = DetailBox->AddChildToVerticalBox(Note);
-    NS->SetPadding(FMargin(0.f, 18.f, 0.f, 0.f));
+    UTextBlock* Skills = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+    Skills->SetText(FText::FromString(FString::Printf(TEXT("Skills         %d / %d equipped"),
+        Rec.EquippedSkillCount, APlayerCombatant::MaxEquippedSkills)));
+    Skills->SetFont(MakeFont(15, false));
+    Skills->SetColorAndOpacity(FSlateColor(ColText));
+    UVerticalBoxSlot* SS = DetailBox->AddChildToVerticalBox(Skills);
+    SS->SetPadding(FMargin(0.f, 8.f, 0.f, 0.f));
 }
 
 // -----------------------------------------------------------------------------
-//  Actions
+//  Switch page
 // -----------------------------------------------------------------------------
 
-void URosterWidget::HandleAction(int32 MemberIndex, ERosterAction Action)
+void URosterWidget::ShowSwitch(ESwitchSlot TargetSlot, int32 ChipSlot)
 {
-    switch (Action)
+    URosterSubsystem* R = GetRoster();
+    if (!SwitchBox || !R || !R->IsValidMember(CurrentMemberIndex)) { return; }
+
+    CurrentSwitchSlot = TargetSlot;
+    CurrentChipSlot = ChipSlot;
+    SwitchBox->ClearChildren();
+
+    UClass* CharClass = R->GetMember(CurrentMemberIndex).CharacterClass;
+
+    // Title
+    const TCHAR* SlotName =
+        (TargetSlot == ESwitchSlot::MainWeapon) ? TEXT("Main Weapon") :
+        (TargetSlot == ESwitchSlot::Gun)        ? TEXT("Gun") :
+        (TargetSlot == ESwitchSlot::Armor)      ? TEXT("Armor") : TEXT("Chip");
+    UTextBlock* Title = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+    Title->SetText(FText::FromString(FString::Printf(TEXT("Choose %s"), SlotName)));
+    Title->SetFont(MakeFont(20, true));
+    Title->SetColorAndOpacity(FSlateColor(ColText));
+    UVerticalBoxSlot* TS = SwitchBox->AddChildToVerticalBox(Title);
+    TS->SetPadding(FMargin(0.f, 0.f, 0.f, 10.f));
+
+    // "Remove" option (equip nothing).
+    {
+        URosterActionButton* Btn = MakeButton(TEXT("(Remove / leave empty)"), ERosterAction::EquipItem, ColBtn);
+        Btn->Payload = nullptr;
+        UVerticalBoxSlot* S = SwitchBox->AddChildToVerticalBox(Btn);
+        S->SetPadding(FMargin(0.f, 3.f));
+    }
+
+    auto AddItemBtn = [&](const FString& Label, UObject* Item)
+    {
+        URosterActionButton* Btn = MakeButton(*Label, ERosterAction::EquipItem, ColCardBG);
+        Btn->Payload = Item;
+        UVerticalBoxSlot* S = SwitchBox->AddChildToVerticalBox(Btn);
+        S->SetPadding(FMargin(0.f, 3.f));
+    };
+
+    int32 Shown = 0;
+    if (TargetSlot == ESwitchSlot::MainWeapon || TargetSlot == ESwitchSlot::Gun)
+    {
+        TArray<UCharacterWeaponDataAsset*> Weapons;
+        if (TargetSlot == ESwitchSlot::MainWeapon) { R->GetAvailableMainWeapons(CharClass, Weapons); }
+        else                                 { R->GetAvailableGuns(CharClass, Weapons); }
+        for (UCharacterWeaponDataAsset* W : Weapons)
+        {
+            if (!W) { continue; }
+            AddItemBtn(FString::Printf(TEXT("%s   [Tier %s]  +%.0f %s"),
+                *W->DisplayName.ToString(), WeaponTierName(static_cast<uint8>(W->CurrentTier)),
+                W->GetCurrentBuffValue(), BuffedStatName(static_cast<uint8>(W->BuffedStat))), W);
+            ++Shown;
+        }
+    }
+    else if (TargetSlot == ESwitchSlot::Armor)
+    {
+        TArray<UCharacterArmorDataAsset*> Armors;
+        R->GetAvailableArmors(Armors);
+        for (UCharacterArmorDataAsset* A : Armors)
+        {
+            if (!A) { continue; }
+            AddItemBtn(A->DisplayName.ToString(), A);
+            ++Shown;
+        }
+    }
+    else // Chip
+    {
+        TArray<UCharacterChipDataAsset*> Chips;
+        R->GetAvailableChips(Chips);
+        for (UCharacterChipDataAsset* C : Chips)
+        {
+            if (!C) { continue; }
+            AddItemBtn(FString::Printf(TEXT("%s   [L%d]"), *C->DisplayName.ToString(), C->CurrentLevel), C);
+            ++Shown;
+        }
+    }
+
+    if (Shown == 0)
+    {
+        UTextBlock* Empty = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+        Empty->SetText(FText::FromString(TEXT("No items of this type authored yet.")));
+        Empty->SetFont(MakeFont(14, false));
+        Empty->SetColorAndOpacity(FSlateColor(ColSubtle));
+        SwitchBox->AddChildToVerticalBox(Empty);
+    }
+
+    if (Switcher) { Switcher->SetActiveWidgetIndex(2); }
+}
+
+// -----------------------------------------------------------------------------
+//  Routing
+// -----------------------------------------------------------------------------
+
+void URosterWidget::HandleButton(URosterActionButton* Btn)
+{
+    if (!Btn) { return; }
+    URosterSubsystem* R = GetRoster();
+
+    switch (Btn->Action)
     {
         case ERosterAction::Close:
             if (OnCloseRequested) { OnCloseRequested(); }
@@ -496,22 +638,74 @@ void URosterWidget::HandleAction(int32 MemberIndex, ERosterAction Action)
             RefreshRoster();
             break;
 
-        case ERosterAction::OpenDetails:
-            ShowDetail(MemberIndex);
+        case ERosterAction::BackToDetail:
+            ShowDetail(CurrentMemberIndex);
             break;
+
+        case ERosterAction::OpenDetails:
+            ShowDetail(Btn->MemberIndex);
+            break;
+
+        case ERosterAction::OpenSwitch:
+            ShowSwitch(Btn->SwitchSlot, Btn->SlotIndex);
+            break;
+
+        case ERosterAction::UpgradeSlot:
+        {
+            if (R && R->IsValidMember(Btn->MemberIndex))
+            {
+                const FPartyMemberRecord& Rec = R->GetMember(Btn->MemberIndex);
+                switch (Btn->SwitchSlot)
+                {
+                    case ESwitchSlot::MainWeapon: R->TryUpgradeWeapon(Rec.MainWeapon); break;
+                    case ESwitchSlot::Gun:        R->TryUpgradeWeapon(Rec.Gun);        break;
+                    case ESwitchSlot::Armor:      R->TryUpgradeArmor(Rec.Armor);       break;
+                    case ESwitchSlot::Chip:
+                        if (Rec.Chips.IsValidIndex(Btn->SlotIndex))
+                        { R->TryUpgradeChip(Rec.Chips[Btn->SlotIndex]); }
+                        break;
+                }
+            }
+            ShowDetail(CurrentMemberIndex);   // refresh costs + stats
+            break;
+        }
+
+        case ERosterAction::EquipItem:
+        {
+            if (R && R->IsValidMember(CurrentMemberIndex))
+            {
+                UObject* Item = Btn->Payload.Get();
+                switch (CurrentSwitchSlot)
+                {
+                    case ESwitchSlot::MainWeapon:
+                        R->SetMemberMainWeapon(CurrentMemberIndex, Cast<UCharacterWeaponDataAsset>(Item));
+                        break;
+                    case ESwitchSlot::Gun:
+                        R->SetMemberGun(CurrentMemberIndex, Cast<UCharacterWeaponDataAsset>(Item));
+                        break;
+                    case ESwitchSlot::Armor:
+                        R->SetMemberArmor(CurrentMemberIndex, Cast<UCharacterArmorDataAsset>(Item));
+                        break;
+                    case ESwitchSlot::Chip:
+                        R->SetMemberChip(CurrentMemberIndex, CurrentChipSlot, Cast<UCharacterChipDataAsset>(Item));
+                        break;
+                }
+            }
+            ShowDetail(CurrentMemberIndex);   // refresh detail with the new gear
+            break;
+        }
 
         case ERosterAction::AssignParty1:
         case ERosterAction::AssignParty2:
         case ERosterAction::AssignBench:
         {
-            URosterSubsystem* R = GetRoster();
             if (R)
             {
                 const EPartyAssignment Target =
-                    (Action == ERosterAction::AssignParty1) ? EPartyAssignment::Party1 :
-                    (Action == ERosterAction::AssignParty2) ? EPartyAssignment::Party2 :
-                                                              EPartyAssignment::Bench;
-                R->SetAssignment(MemberIndex, Target);
+                    (Btn->Action == ERosterAction::AssignParty1) ? EPartyAssignment::Party1 :
+                    (Btn->Action == ERosterAction::AssignParty2) ? EPartyAssignment::Party2 :
+                                                                  EPartyAssignment::Bench;
+                R->SetAssignment(Btn->MemberIndex, Target);
             }
             RefreshRoster();
             break;

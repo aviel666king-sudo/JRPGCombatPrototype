@@ -140,6 +140,9 @@ public:
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Input")
     TObjectPtr<UInputAction> FastTravelAction;
 
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|Input")
+    TObjectPtr<UInputAction> UpgradeAction;
+
     /** Widget class for the fast-travel overlay. Defaults to the C++ class. */
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Exploration|UI")
     TSubclassOf<class UFastTravelWidget> FastTravelClass;
@@ -304,8 +307,11 @@ protected:
 
     /** Tab — toggle the full-screen roster / party-management screen. */
     void HandleToggleRoster();
-    void OpenRoster();
+    void OpenRoster(bool bUpgrade = false);
     void CloseRoster();
+
+    /** U — at the CAMP checkpoint only, open the roster in upgrade mode. */
+    void HandleUpgradeAtCamp();
 
     /** Toggle the stat shop. Opens only when a checkpoint is in range. */
     void HandleToggleShop();

@@ -222,7 +222,7 @@ void ACheckpoint::DrawInteractPrompt()
 
     // The "leave" line changes shape on camp checkpoints.
     const TCHAR* LeavePrompt = bIsCampCheckpoint
-        ? TEXT("[L] Leave Camp")
+        ? TEXT("[L] Leave Camp    [U] Upgrade Gear")
         : TEXT("[L] Leave to Open World    [G] Fast Travel");
 
     DrawDebugString(GetWorld(), Base, TEXT("[E] Rest    [K] Stat Shop    [J] Skill Tree"),

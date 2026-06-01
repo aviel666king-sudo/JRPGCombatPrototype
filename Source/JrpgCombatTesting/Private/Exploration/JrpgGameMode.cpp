@@ -8,6 +8,8 @@
 #include "Characters/Base/CombatantBase.h"
 #include "Characters/Player/PlayerCombatant.h"
 #include "Roster/RosterSubsystem.h"
+#include "Equipment/CharacterWeaponDataAsset.h"
+#include "Equipment/CraftingMaterialDataAsset.h"
 #include "Engine/GameInstance.h"
 #include "UI/CombatHUDWidget.h"
 #include "Blueprint/UserWidget.h"
@@ -15,6 +17,9 @@
 #include "GameFramework/PawnMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "EngineUtils.h"  // TActorIterator
+
+// Defined further down — forward-declared so HandleBattleEnded can use it.
+static void ShowToast(const FString& Msg, FColor Color, float Duration = 2.5f);
 
 AJrpgGameMode::AJrpgGameMode()
 {
@@ -308,6 +313,39 @@ void AJrpgGameMode::HandleBattleEnded(bool bVictory)
 
     if (bVictory)
     {
+        // ── Award drops to the persistent roster BEFORE we destroy the
+        //    encounter + spawned enemies below. ─────────────────────────────
+        if (UGameInstance* GI = GetGameInstance())
+        {
+            if (URosterSubsystem* Roster = GI->GetSubsystem<URosterSubsystem>())
+            {
+                const int32 NumEnemies = FMath::Max(1, SpawnedEnemies.Num());
+                Roster->AddGold(NumEnemies * GoldPerEnemy);
+                if (DefaultDropMaterial)
+                {
+                    Roster->AddMaterial(DefaultDropMaterial, NumEnemies * MaterialPerEnemy);
+                }
+
+                int32 DroppedWeapons = 0;
+                auto AwardWeaponDrop = [&](AEnemyEncounter* Enc)
+                {
+                    if (Enc && Enc->WeaponDrop)
+                    {
+                        Roster->AddOwnedWeapon(Enc->WeaponDrop);
+                        ++DroppedWeapons;
+                    }
+                };
+                AwardWeaponDrop(ActiveEncounter);
+                for (const TObjectPtr<AEnemyEncounter>& M : MergedEncounters) { AwardWeaponDrop(M); }
+
+                FString Msg = FString::Printf(TEXT("Loot:  +%d Gold   +%d %s"),
+                    NumEnemies * GoldPerEnemy, NumEnemies * MaterialPerEnemy,
+                    DefaultDropMaterial ? TEXT("Material") : TEXT(""));
+                if (DroppedWeapons > 0) { Msg += TEXT("   + new weapon!"); }
+                ShowToast(Msg, FColor::Yellow);
+            }
+        }
+
         // Tear down the combat HUD — it added itself to viewport and switched
         // input mode to GameAndUI; we have to undo both for exploration to
         // feel right (mouse hidden, input goes to the pawn).
@@ -395,7 +433,7 @@ void AJrpgGameMode::HandleBattleEnded(bool bVictory)
 // -----------------------------------------------------------------------------
 
 // Temporary on-screen feedback. Removed once the proper HUD lands.
-static void ShowToast(const FString& Msg, FColor Color, float Duration = 2.5f)
+static void ShowToast(const FString& Msg, FColor Color, float Duration)
 {
     if (GEngine)
     {
@@ -460,6 +498,7 @@ void AJrpgGameMode::SetPlayerParty(const TArray<ACombatantBase*>& InParty)
         {
             Roster->SeedFromParty(PlayerParty);      // no-op after the first time
             Roster->RestoreHPToParty(PlayerParty);   // applies saved HP
+            Roster->SetPrimaryMaterial(DefaultDropMaterial);
         }
     }
 }

@@ -327,7 +327,7 @@ void APlayerCombatant::ApplyEquipmentBonuses()
     }
     if (Armor)
     {
-        AccumulateStats(NewDelta, Armor->StatDelta, +1.f);
+        AccumulateStats(NewDelta, Armor->GetCurrentStatDelta(), +1.f);
         // Armor carries its own chip socket (independent of the 3 character
         // chips). When the armor is equipped, that chip's stats also apply.
         if (Armor->SocketedChip)

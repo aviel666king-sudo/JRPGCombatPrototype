@@ -14,6 +14,16 @@ class UBorder;
 struct FPartyMemberRecord;
 enum class EPartyAssignment : uint8;
 
+/** Which equipment slot a switch action targets. */
+UENUM()
+enum class ESwitchSlot : uint8
+{
+    MainWeapon,
+    Gun,
+    Armor,
+    Chip,
+};
+
 /** What a roster button does when clicked. */
 UENUM()
 enum class ERosterAction : uint8
@@ -23,14 +33,18 @@ enum class ERosterAction : uint8
     AssignBench,
     OpenDetails,
     BackToRoster,
+    OpenSwitch,     // open the switch list for SwitchSlot / SlotIndex
+    EquipItem,      // equip Payload into the current switch slot
+    UpgradeSlot,    // upgrade the item in SwitchSlot / SlotIndex (camp only)
+    BackToDetail,
     Close,
 };
 
 /**
  * URosterActionButton
  *
- * Button that remembers which party-member record it acts on (by index) and
- * which action it performs, so one handler routes every click.
+ * Button carrying everything one handler needs to route a click: which member,
+ * what action, (for switching) which slot + chip index + the item payload.
  */
 UCLASS()
 class JRPGCOMBATTESTING_API URosterActionButton : public UButton
@@ -40,7 +54,11 @@ class JRPGCOMBATTESTING_API URosterActionButton : public UButton
 public:
     int32 MemberIndex = -1;
     ERosterAction Action = ERosterAction::Close;
-    TFunction<void(int32, ERosterAction)> OnActionClicked;
+    ESwitchSlot SwitchSlot = ESwitchSlot::MainWeapon;
+    int32 SlotIndex = -1;                  // chip slot when SwitchSlot == Chip
+    TWeakObjectPtr<UObject> Payload;       // item to equip for EquipItem
+
+    TFunction<void(URosterActionButton*)> OnActionClicked;
 
     UFUNCTION()
     void HandleClicked();
@@ -49,15 +67,11 @@ public:
 /**
  * URosterWidget
  *
- * Full-screen party-management screen opened with Tab. Reads the PERSISTENT
- * party records from URosterSubsystem, so it is populated everywhere — Level,
- * Open World, and Camp — not just where combatant actors are placed.
- *
- * Page 0 (Roster): a card per member (name / level / HP / party tag) with
- *   [P1] [P2] [Bench] [Details] buttons, plus a footer showing party counts and
- *   the shared heal/revive/AP charge pool.
- * Page 1 (Detail): read-only stats + loadout for the selected member. Gear
- *   switching lands in a later pass.
+ * Full-screen party-management screen (Tab). Reads persistent party records
+ * from URosterSubsystem so it works in every level. Three pages:
+ *   0 Roster  — cards + party assignment + potion footer
+ *   1 Detail  — stats + loadout (each slot has a [Change] button) + passives
+ *   2 Switch  — list of owned items for the chosen slot; click to equip
  */
 UCLASS()
 class JRPGCOMBATTESTING_API URosterWidget : public UUserWidget
@@ -66,6 +80,11 @@ class JRPGCOMBATTESTING_API URosterWidget : public UUserWidget
 
 public:
     TFunction<void()> OnCloseRequested;
+
+    /** When true (opened from the camp checkpoint), the detail page shows
+     *  per-slot Upgrade buttons + the gold / material balance. Set by the pawn
+     *  before AddToViewport. */
+    bool bUpgradeMode = false;
 
 protected:
     virtual TSharedRef<SWidget> RebuildWidget() override;
@@ -77,19 +96,32 @@ private:
     TObjectPtr<UWidgetSwitcher> Switcher;
     TObjectPtr<UVerticalBox>    RosterList;
     TObjectPtr<UVerticalBox>    DetailBox;
+    TObjectPtr<UVerticalBox>    SwitchBox;
     TObjectPtr<UTextBlock>      PartyCountText;
+
+    int32 CurrentMemberIndex = -1;
+    ESwitchSlot CurrentSwitchSlot = ESwitchSlot::MainWeapon;
+    int32 CurrentChipSlot = -1;
 
     URosterSubsystem* GetRoster() const;
 
     void RefreshRoster();
     void ShowDetail(int32 MemberIndex);
-    void HandleAction(int32 MemberIndex, ERosterAction Action);
+    void ShowSwitch(ESwitchSlot Slot, int32 ChipSlot);
+    void HandleButton(URosterActionButton* Btn);
 
     UBorder* BuildCharacterCard(int32 MemberIndex);
 
     void AddDetailHeader(const FPartyMemberRecord& Rec);
     void AddStatsBlock(const FPartyMemberRecord& Rec);
     void AddLoadoutBlock(const FPartyMemberRecord& Rec);
+
+    /** Build one loadout row: "Label: Value   [Change]". */
+    void AddLoadoutRow(const FString& Label, const FString& Value,
+                       ESwitchSlot Slot, int32 ChipSlot);
+
+    URosterActionButton* MakeButton(const TCHAR* Label, ERosterAction Action,
+                                    const struct FLinearColor& BG);
 
     static FSlateFontInfo MakeFont(int32 Size, bool bBold = false);
     static FText AssignmentLabel(EPartyAssignment Assignment);

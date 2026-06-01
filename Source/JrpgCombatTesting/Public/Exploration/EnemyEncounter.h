@@ -83,6 +83,13 @@ public:
               meta = (ClampMin = "1"))
     int32 EncounterLevel = 1;
 
+    /** Optional weapon this encounter drops on victory — added to the player's
+     *  owned inventory so it becomes switchable. Bind a specific weapon to a
+     *  specific enemy here (e.g. the Medalume sword). Leave null for no weapon
+     *  drop (the enemy still gives the global gold + material drop). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Encounter|Drops")
+    TObjectPtr<class UCharacterWeaponDataAsset> WeaponDrop;
+
     /** Arena where this fight happens. Pick any ABattleArena placed in the level. */
     UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Encounter")
     TObjectPtr<ABattleArena> AssignedArena;

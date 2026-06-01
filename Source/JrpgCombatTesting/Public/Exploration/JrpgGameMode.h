@@ -10,6 +10,7 @@ class ABattleManager;
 class ABattleArena;
 class AEnemyEncounter;
 class AExplorationPawn;
+class UCraftingMaterialDataAsset;
 
 UENUM(BlueprintType)
 enum class EWorldMode : uint8
@@ -207,6 +208,24 @@ protected:
     /** Enemies spawned for the current combat. Destroyed on victory. */
     UPROPERTY()
     TArray<TObjectPtr<ACombatantBase>> SpawnedEnemies;
+
+    // -------------------------------------------------------------------------
+    //  Drops — awarded to the persistent roster on victory.
+    // -------------------------------------------------------------------------
+
+    /** Material every defeated enemy drops (Metal Scraps). Set in BP defaults. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "JRPG|Drops")
+    TObjectPtr<UCraftingMaterialDataAsset> DefaultDropMaterial;
+
+    /** Gold awarded per defeated enemy. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "JRPG|Drops",
+              meta = (ClampMin = "0"))
+    int32 GoldPerEnemy = 25;
+
+    /** DefaultDropMaterial awarded per defeated enemy. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "JRPG|Drops",
+              meta = (ClampMin = "0"))
+    int32 MaterialPerEnemy = 3;
 
     /** Position of the exploration pawn at the moment combat started. */
     FVector  PawnReturnLocation = FVector::ZeroVector;

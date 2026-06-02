@@ -404,7 +404,7 @@ void URosterWidget::AddStatsBlock(const FPartyMemberRecord& Rec)
 }
 
 void URosterWidget::AddLoadoutRow(const FString& Label, const FString& Value,
-                                  ESwitchSlot TargetSlot, int32 ChipSlot)
+                                  ESwitchSlot TargetSlot, int32 ChipSlot, bool bChangeCampOnly)
 {
     UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 
@@ -416,12 +416,17 @@ void URosterWidget::AddLoadoutRow(const FString& Label, const FString& Value,
     TS->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
     TS->SetVerticalAlignment(VAlign_Center);
 
-    URosterActionButton* Change = MakeButton(TEXT("Change"), ERosterAction::OpenSwitch, ColBtn);
-    Change->MemberIndex = CurrentMemberIndex;
-    Change->SwitchSlot = TargetSlot;
-    Change->SlotIndex = ChipSlot;
-    UHorizontalBoxSlot* CS = Row->AddChildToHorizontalBox(Change);
-    CS->SetVerticalAlignment(VAlign_Center);
+    // Change button. For camp-only slots (armor chip re-bind) it appears only
+    // in the camp upgrade screen.
+    if (!bChangeCampOnly || bUpgradeMode)
+    {
+        URosterActionButton* Change = MakeButton(TEXT("Change"), ERosterAction::OpenSwitch, ColBtn);
+        Change->MemberIndex = CurrentMemberIndex;
+        Change->SwitchSlot = TargetSlot;
+        Change->SlotIndex = ChipSlot;
+        UHorizontalBoxSlot* CS = Row->AddChildToHorizontalBox(Change);
+        CS->SetVerticalAlignment(VAlign_Center);
+    }
 
     // Upgrade button (camp only). Resolve the equipped item + its cost.
     if (bUpgradeMode)
@@ -429,6 +434,7 @@ void URosterWidget::AddLoadoutRow(const FString& Label, const FString& Value,
         URosterSubsystem* R = GetRoster();
         FString UpLabel = TEXT("—");
         bool bClickable = false;
+        bool bHasItem = false;   // does this slot hold something upgradable?
         if (R && R->IsValidMember(CurrentMemberIndex))
         {
             const FPartyMemberRecord& Rec = R->GetMember(CurrentMemberIndex);
@@ -441,7 +447,10 @@ void URosterWidget::AddLoadoutRow(const FString& Label, const FString& Value,
             { bHave = R->GetArmorUpgradeInfo(Rec.Armor, NeedGold, NeedMat, bMaxed); }
             else if (TargetSlot == ESwitchSlot::Chip && Rec.Chips.IsValidIndex(ChipSlot) && Rec.Chips[ChipSlot])
             { bHave = R->GetChipUpgradeInfo(Rec.Chips[ChipSlot], NeedGold, NeedMat, bMaxed); }
+            else if (TargetSlot == ESwitchSlot::ArmorChip && Rec.Armor && Rec.Armor->SocketedChip)
+            { bHave = R->GetChipUpgradeInfo(Rec.Armor->SocketedChip, NeedGold, NeedMat, bMaxed); }
 
+            bHasItem = bHave;
             if (bHave)
             {
                 if (bMaxed) { UpLabel = TEXT("MAX"); }
@@ -449,14 +458,19 @@ void URosterWidget::AddLoadoutRow(const FString& Label, const FString& Value,
             }
         }
 
-        URosterActionButton* Up = MakeButton(*UpLabel, ERosterAction::UpgradeSlot,
-            bClickable ? ColParty2 * 0.6f : ColBtn);
-        Up->MemberIndex = CurrentMemberIndex;
-        Up->SwitchSlot = TargetSlot;
-        Up->SlotIndex = ChipSlot;
-        UHorizontalBoxSlot* US = Row->AddChildToHorizontalBox(Up);
-        US->SetVerticalAlignment(VAlign_Center);
-        US->SetPadding(FMargin(4.f, 0.f, 0.f, 0.f));
+        // Only show an Upgrade button when something is actually equipped in
+        // this slot. Empty slots get no upgrade option.
+        if (bHasItem)
+        {
+            URosterActionButton* Up = MakeButton(*UpLabel, ERosterAction::UpgradeSlot,
+                bClickable ? ColParty2 * 0.6f : ColBtn);
+            Up->MemberIndex = CurrentMemberIndex;
+            Up->SwitchSlot = TargetSlot;
+            Up->SlotIndex = ChipSlot;
+            UHorizontalBoxSlot* US = Row->AddChildToHorizontalBox(Up);
+            US->SetVerticalAlignment(VAlign_Center);
+            US->SetPadding(FMargin(4.f, 0.f, 0.f, 0.f));
+        }
     }
 
     UVerticalBoxSlot* RS = DetailBox->AddChildToVerticalBox(Row);
@@ -507,6 +521,16 @@ void URosterWidget::AddLoadoutBlock(const FPartyMemberRecord& Rec)
         Rec.Armor ? Rec.Armor->DisplayName.ToString() : FString(TEXT("(empty)")),
         ESwitchSlot::Armor, -1);
 
+    // Armor's socketed chip — re-bind only at camp (bChangeCampOnly).
+    {
+        UCharacterChipDataAsset* AChip = Rec.Armor ? Rec.Armor->SocketedChip.Get() : nullptr;
+        const FString AVal = !Rec.Armor
+            ? FString(TEXT("(no armor)"))
+            : (AChip ? FString::Printf(TEXT("%s  [L%d]"), *AChip->DisplayName.ToString(), AChip->CurrentLevel)
+                     : FString(TEXT("(empty)")));
+        AddLoadoutRow(TEXT("  Armor Chip"), AVal, ESwitchSlot::ArmorChip, -1, /*bChangeCampOnly=*/true);
+    }
+
     for (int32 i = 0; i < APlayerCombatant::MaxChipSlots; ++i)
     {
         UCharacterChipDataAsset* Chip = Rec.Chips.IsValidIndex(i) ? Rec.Chips[i] : nullptr;
@@ -544,7 +568,8 @@ void URosterWidget::ShowSwitch(ESwitchSlot TargetSlot, int32 ChipSlot)
     const TCHAR* SlotName =
         (TargetSlot == ESwitchSlot::MainWeapon) ? TEXT("Main Weapon") :
         (TargetSlot == ESwitchSlot::Gun)        ? TEXT("Gun") :
-        (TargetSlot == ESwitchSlot::Armor)      ? TEXT("Armor") : TEXT("Chip");
+        (TargetSlot == ESwitchSlot::Armor)      ? TEXT("Armor") :
+        (TargetSlot == ESwitchSlot::ArmorChip)  ? TEXT("Armor Chip") : TEXT("Chip");
     UTextBlock* Title = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
     Title->SetText(FText::FromString(FString::Printf(TEXT("Choose %s"), SlotName)));
     Title->SetFont(MakeFont(20, true));
@@ -594,10 +619,10 @@ void URosterWidget::ShowSwitch(ESwitchSlot TargetSlot, int32 ChipSlot)
             ++Shown;
         }
     }
-    else // Chip
+    else // Chip or ArmorChip — separate owned-chip pools (no overlap)
     {
         TArray<UCharacterChipDataAsset*> Chips;
-        R->GetAvailableChips(Chips);
+        R->GetAvailableChips(Chips, /*bArmorChips=*/ TargetSlot == ESwitchSlot::ArmorChip);
         for (UCharacterChipDataAsset* C : Chips)
         {
             if (!C) { continue; }
@@ -664,6 +689,9 @@ void URosterWidget::HandleButton(URosterActionButton* Btn)
                         if (Rec.Chips.IsValidIndex(Btn->SlotIndex))
                         { R->TryUpgradeChip(Rec.Chips[Btn->SlotIndex]); }
                         break;
+                    case ESwitchSlot::ArmorChip:
+                        if (Rec.Armor) { R->TryUpgradeChip(Rec.Armor->SocketedChip); }
+                        break;
                 }
             }
             ShowDetail(CurrentMemberIndex);   // refresh costs + stats
@@ -688,6 +716,9 @@ void URosterWidget::HandleButton(URosterActionButton* Btn)
                         break;
                     case ESwitchSlot::Chip:
                         R->SetMemberChip(CurrentMemberIndex, CurrentChipSlot, Cast<UCharacterChipDataAsset>(Item));
+                        break;
+                    case ESwitchSlot::ArmorChip:
+                        R->SetMemberArmorChip(CurrentMemberIndex, Cast<UCharacterChipDataAsset>(Item));
                         break;
                 }
             }

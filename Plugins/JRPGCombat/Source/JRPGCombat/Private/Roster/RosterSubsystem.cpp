@@ -181,6 +181,20 @@ void URosterSubsystem::SetMemberChip(int32 Index, int32 ChipSlot, UCharacterChip
     }
 }
 
+void URosterSubsystem::SetMemberArmorChip(int32 Index, UCharacterChipDataAsset* Chip)
+{
+    if (!Members.IsValidIndex(Index)) { return; }
+    FPartyMemberRecord& Rec = Members[Index];
+    if (!Rec.Armor) { return; }                 // nothing to socket into
+
+    Rec.Armor->SocketedChip = Chip;             // the chip rides with the armor asset
+
+    if (APlayerCombatant* Actor = FindLiveActor(Rec))
+    {
+        ApplyRecordToActor(Index, Actor);
+    }
+}
+
 void URosterSubsystem::SaveHPFromParty(const TArray<ACombatantBase*>& Party)
 {
     for (ACombatantBase* Base : Party)
@@ -313,6 +327,19 @@ void URosterSubsystem::AddOwnedChip(UCharacterChipDataAsset* C)
     if (C) { OwnedChips.AddUnique(C); }
 }
 
+bool URosterSubsystem::OwnsWeapon(UCharacterWeaponDataAsset* W) const
+{
+    return W && OwnedWeapons.Contains(W);
+}
+bool URosterSubsystem::OwnsArmor(UCharacterArmorDataAsset* A) const
+{
+    return A && OwnedArmors.Contains(A);
+}
+bool URosterSubsystem::OwnsChip(UCharacterChipDataAsset* C) const
+{
+    return C && OwnedChips.Contains(C);
+}
+
 void URosterSubsystem::GetAvailableWeapons(UClass* CharacterClass, bool bGun,
                                            TArray<UCharacterWeaponDataAsset*>& Out) const
 {
@@ -345,10 +372,13 @@ void URosterSubsystem::GetAvailableArmors(TArray<UCharacterArmorDataAsset*>& Out
     for (const TObjectPtr<UCharacterArmorDataAsset>& A : OwnedArmors) { if (A) Out.Add(A); }
 }
 
-void URosterSubsystem::GetAvailableChips(TArray<UCharacterChipDataAsset*>& Out) const
+void URosterSubsystem::GetAvailableChips(TArray<UCharacterChipDataAsset*>& Out, bool bArmorChips) const
 {
     Out.Reset();
-    for (const TObjectPtr<UCharacterChipDataAsset>& C : OwnedChips) { if (C) Out.Add(C); }
+    for (const TObjectPtr<UCharacterChipDataAsset>& C : OwnedChips)
+    {
+        if (C && C->bIsArmorChip == bArmorChips) { Out.Add(C); }
+    }
 }
 
 // -----------------------------------------------------------------------------

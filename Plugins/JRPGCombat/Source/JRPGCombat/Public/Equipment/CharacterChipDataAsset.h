@@ -45,12 +45,15 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chip|Identity")
     EChipSlot ThematicSlot = EChipSlot::Brain;
 
+    /** True = this chip is an ARMOR chip (socketed into a piece of armor) and
+     *  may NOT be placed in a character chip slot. False = a regular character
+     *  chip and may NOT be socketed into armor. Keeps the two pools separate so
+     *  the same chip can't sit in both places at once. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chip|Identity")
+    bool bIsArmorChip = false;
+
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chip|Identity")
     EChipRarity Rarity = EChipRarity::Common;
-
-    /** Optional thematic element. Defaults to a neutral physical. */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chip|Identity")
-    EElement ThematicElement = EElement::Wind;
 
     /** When the rarity is CharacterSpecific, this points at the character
      *  class that's allowed to use it. Other characters can't equip it. */

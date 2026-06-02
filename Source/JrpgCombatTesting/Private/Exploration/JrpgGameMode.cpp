@@ -7,8 +7,12 @@
 #include "Core/BattleArena.h"
 #include "Characters/Base/CombatantBase.h"
 #include "Characters/Player/PlayerCombatant.h"
+#include "Characters/Enemy/EnemyCombatant.h"
+#include "Core/DangerManager.h"
 #include "Roster/RosterSubsystem.h"
 #include "Equipment/CharacterWeaponDataAsset.h"
+#include "Equipment/CharacterChipDataAsset.h"
+#include "Equipment/CharacterArmorDataAsset.h"
 #include "Equipment/CraftingMaterialDataAsset.h"
 #include "Engine/GameInstance.h"
 #include "UI/CombatHUDWidget.h"
@@ -326,22 +330,26 @@ void AJrpgGameMode::HandleBattleEnded(bool bVictory)
                     Roster->AddMaterial(DefaultDropMaterial, NumEnemies * MaterialPerEnemy);
                 }
 
-                int32 DroppedWeapons = 0;
-                auto AwardWeaponDrop = [&](AEnemyEncounter* Enc)
+                int32 DroppedItems = 0;
+                auto AwardDrops = [&](AEnemyEncounter* Enc)
                 {
-                    if (Enc && Enc->WeaponDrop)
-                    {
-                        Roster->AddOwnedWeapon(Enc->WeaponDrop);
-                        ++DroppedWeapons;
-                    }
+                    if (!Enc) { return; }
+                    // Only award (and count toward the "new gear" toast) items the
+                    // player doesn't already own — no duplicates, no noise.
+                    if (Enc->WeaponDrop && !Roster->OwnsWeapon(Enc->WeaponDrop))
+                    { Roster->AddOwnedWeapon(Enc->WeaponDrop); ++DroppedItems; }
+                    for (const TObjectPtr<UCharacterChipDataAsset>& C : Enc->ChipDrops)
+                    { if (C && !Roster->OwnsChip(C)) { Roster->AddOwnedChip(C); ++DroppedItems; } }
+                    for (const TObjectPtr<UCharacterArmorDataAsset>& A : Enc->ArmorDrops)
+                    { if (A && !Roster->OwnsArmor(A)) { Roster->AddOwnedArmor(A); ++DroppedItems; } }
                 };
-                AwardWeaponDrop(ActiveEncounter);
-                for (const TObjectPtr<AEnemyEncounter>& M : MergedEncounters) { AwardWeaponDrop(M); }
+                AwardDrops(ActiveEncounter);
+                for (const TObjectPtr<AEnemyEncounter>& M : MergedEncounters) { AwardDrops(M); }
 
                 FString Msg = FString::Printf(TEXT("Loot:  +%d Gold   +%d %s"),
                     NumEnemies * GoldPerEnemy, NumEnemies * MaterialPerEnemy,
                     DefaultDropMaterial ? TEXT("Material") : TEXT(""));
-                if (DroppedWeapons > 0) { Msg += TEXT("   + new weapon!"); }
+                if (DroppedItems > 0) { Msg += TEXT("   + new gear!"); }
                 ShowToast(Msg, FColor::Yellow);
             }
         }
@@ -425,6 +433,81 @@ void AJrpgGameMode::HandleBattleEnded(bool bVictory)
         // Defeat — leave things as they are for now. A real implementation would
         // show a Game Over screen. TODO: add Game Over flow.
         UE_LOG(LogTemp, Warning, TEXT("[JrpgGameMode] Defeat — Game Over flow not implemented yet."));
+    }
+}
+
+void AJrpgGameMode::AwardAssassinationRewards(AEnemyEncounter* Encounter)
+{
+    if (!Encounter) { return; }
+
+    // Random cut of the would-be rewards: 20–30% this kill.
+    const float Frac = FMath::FRandRange(0.20f, 0.30f);
+
+    const int32 NumEnemies = FMath::Max(1, Encounter->GetEnemyClasses().Num());
+
+    // ── XP (reduced, lead member only — a stealth strike, not a party fight) ──
+    int32 TotalXP = 0;
+    for (TSubclassOf<ACombatantBase> EnemyClass : Encounter->GetEnemyClasses())
+    {
+        if (!EnemyClass) { continue; }
+        if (const AEnemyCombatant* CDO = EnemyClass->GetDefaultObject<AEnemyCombatant>())
+        {
+            TotalXP += FMath::Max(0, CDO->XPReward);
+        }
+    }
+    const int32 ReducedXP = FMath::FloorToInt(TotalXP * Frac);
+    if (ReducedXP > 0 && PlayerParty.Num() > 0)
+    {
+        if (APlayerCombatant* Lead = Cast<APlayerCombatant>(PlayerParty[0]))
+        {
+            Lead->GrantXP(ReducedXP);
+        }
+    }
+
+    // ── Gold + material (reduced) and FULL loot drops ────────────────────────
+    int32 GoldAward = 0, MatAward = 0, Dropped = 0;
+    UGameInstance* GI = GetGameInstance();
+    URosterSubsystem* Roster = GI ? GI->GetSubsystem<URosterSubsystem>() : nullptr;
+    if (Roster)
+    {
+        GoldAward = FMath::FloorToInt(NumEnemies * GoldPerEnemy * Frac);
+        Roster->AddGold(GoldAward);
+
+        if (DefaultDropMaterial)
+        {
+            MatAward = FMath::FloorToInt(NumEnemies * MaterialPerEnemy * Frac);
+            Roster->AddMaterial(DefaultDropMaterial, MatAward);
+        }
+
+        // Loot drops are FULL — a stealth kill still yields the bound item
+        // (skip anything already owned to avoid duplicates).
+        if (Encounter->WeaponDrop && !Roster->OwnsWeapon(Encounter->WeaponDrop))
+        { Roster->AddOwnedWeapon(Encounter->WeaponDrop); ++Dropped; }
+        for (const TObjectPtr<UCharacterChipDataAsset>& C : Encounter->ChipDrops)
+        { if (C && !Roster->OwnsChip(C)) { Roster->AddOwnedChip(C); ++Dropped; } }
+        for (const TObjectPtr<UCharacterArmorDataAsset>& A : Encounter->ArmorDrops)
+        { if (A && !Roster->OwnsArmor(A)) { Roster->AddOwnedArmor(A); ++Dropped; } }
+    }
+
+    FString Msg = FString::Printf(TEXT("Assassination!  +%d XP   +%d Gold   +%d %s  (%.0f%%)"),
+        ReducedXP, GoldAward, MatAward,
+        DefaultDropMaterial ? *DefaultDropMaterial->DisplayName.ToString() : TEXT("Material"),
+        Frac * 100.f);
+    if (Dropped > 0) { Msg += TEXT("   + loot!"); }
+    ShowToast(Msg, FColor::Cyan);
+
+    // Recompute aggregate party level in case the lead leveled up.
+    if (UDangerManager* DM = GI ? GI->GetSubsystem<UDangerManager>() : nullptr)
+    {
+        int32 MaxLevel = 1;
+        for (ACombatantBase* C : PlayerParty)
+        {
+            if (APlayerCombatant* P = Cast<APlayerCombatant>(C))
+            {
+                MaxLevel = FMath::Max(MaxLevel, P->Level);
+            }
+        }
+        DM->SetPlayerEffectiveLevel(MaxLevel);
     }
 }
 

@@ -152,6 +152,9 @@ public:
     void SetMemberArmor(int32 Index, UCharacterArmorDataAsset* Armor);
     void SetMemberChip(int32 Index, int32 ChipSlot, UCharacterChipDataAsset* Chip);
 
+    /** Socket a chip into the member's equipped armor (camp-only re-bind). */
+    void SetMemberArmorChip(int32 Index, UCharacterChipDataAsset* Chip);
+
     // -------------------------------------------------------------------------
     //  Heal-charge pool (shared across the party, persists across levels)
     // -------------------------------------------------------------------------
@@ -180,11 +183,19 @@ public:
     void GetAvailableMainWeapons(UClass* CharacterClass, TArray<UCharacterWeaponDataAsset*>& Out) const;
     void GetAvailableGuns(UClass* CharacterClass, TArray<UCharacterWeaponDataAsset*>& Out) const;
     void GetAvailableArmors(TArray<UCharacterArmorDataAsset*>& Out) const;
-    void GetAvailableChips(TArray<UCharacterChipDataAsset*>& Out) const;
+    /** bArmorChips=false → regular character chips; true → armor chips. The two
+     *  pools never overlap (see UCharacterChipDataAsset::bIsArmorChip). */
+    void GetAvailableChips(TArray<UCharacterChipDataAsset*>& Out, bool bArmorChips = false) const;
 
     void AddOwnedWeapon(UCharacterWeaponDataAsset* W);
     void AddOwnedArmor(UCharacterArmorDataAsset* A);
     void AddOwnedChip(UCharacterChipDataAsset* C);
+
+    /** Already-owned queries — used by drops / world pickups to avoid handing
+     *  the player a duplicate (and to suppress the "new gear" toast). */
+    bool OwnsWeapon(UCharacterWeaponDataAsset* W) const;
+    bool OwnsArmor(UCharacterArmorDataAsset* A) const;
+    bool OwnsChip(UCharacterChipDataAsset* C) const;
 
     // -------------------------------------------------------------------------
     //  Economy — gold + materials (persist across levels), grown by enemy drops.

@@ -90,6 +90,14 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Encounter|Drops")
     TObjectPtr<class UCharacterWeaponDataAsset> WeaponDrop;
 
+    /** Chips this encounter drops on victory (e.g. armor chips). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Encounter|Drops")
+    TArray<TObjectPtr<class UCharacterChipDataAsset>> ChipDrops;
+
+    /** Armor pieces this encounter drops on victory. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Encounter|Drops")
+    TArray<TObjectPtr<class UCharacterArmorDataAsset>> ArmorDrops;
+
     /** Arena where this fight happens. Pick any ABattleArena placed in the level. */
     UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Encounter")
     TObjectPtr<ABattleArena> AssignedArena;

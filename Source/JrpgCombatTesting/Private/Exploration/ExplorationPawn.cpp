@@ -24,6 +24,7 @@
 #include "UI/SkillTreeWidget.h"
 #include "UI/FastTravelWidget.h"
 #include "UI/RosterWidget.h"
+#include "Exploration/LootPickup.h"
 #include "Travel/JrpgTravelSubsystem.h"
 #include "Travel/WorldPortal.h"
 #include "Kismet/GameplayStatics.h"
@@ -686,6 +687,20 @@ void AExplorationPawn::HandleInteract()
     UWorld* World = GetWorld();
     if (!World) { return; }
 
+    // Loot pickups take priority — grab the closest in-range one and stop.
+    {
+        ALootPickup* BestLoot = nullptr;
+        float BestLootDist = TNumericLimits<float>::Max();
+        for (TActorIterator<ALootPickup> It(World); It; ++It)
+        {
+            ALootPickup* L = *It;
+            if (!L || !L->IsPlayerInRange()) { continue; }
+            const float D = FVector::DistSquared(L->GetActorLocation(), GetActorLocation());
+            if (D < BestLootDist) { BestLootDist = D; BestLoot = L; }
+        }
+        if (BestLoot) { BestLoot->Interact(); return; }
+    }
+
     // Pick the closest in-range checkpoint. Multiple overlapping is unlikely
     // but handle it gracefully.
     ACheckpoint* Best     = nullptr;
@@ -917,6 +932,10 @@ void AExplorationPawn::OpenRoster(bool bUpgrade)
     RosterWidget->AddToViewport(50);
     bRosterOpen = true;
 
+    // Freeze the world so wandering encounters can't walk into us / start a
+    // fight while we're managing the party. Slate UI still runs while paused.
+    UGameplayStatics::SetGamePaused(this, true);
+
     PC->SetShowMouseCursor(true);
     FInputModeUIOnly Mode;
     Mode.SetWidgetToFocus(RosterWidget->TakeWidget());
@@ -932,6 +951,8 @@ void AExplorationPawn::CloseRoster()
         RosterWidget = nullptr;
     }
     bRosterOpen = false;
+
+    UGameplayStatics::SetGamePaused(this, false);
 
     if (APlayerController* PC = Cast<APlayerController>(GetController()))
     {

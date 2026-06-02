@@ -22,6 +22,7 @@ enum class ESwitchSlot : uint8
     Gun,
     Armor,
     Chip,
+    ArmorChip,   // the chip socketed into the equipped armor (camp-only re-bind)
 };
 
 /** What a roster button does when clicked. */
@@ -116,9 +117,10 @@ private:
     void AddStatsBlock(const FPartyMemberRecord& Rec);
     void AddLoadoutBlock(const FPartyMemberRecord& Rec);
 
-    /** Build one loadout row: "Label: Value   [Change]". */
+    /** Build one loadout row: "Label: Value   [Change] [Up]". If bChangeCampOnly,
+     *  the Change button only appears in camp upgrade mode. */
     void AddLoadoutRow(const FString& Label, const FString& Value,
-                       ESwitchSlot Slot, int32 ChipSlot);
+                       ESwitchSlot Slot, int32 ChipSlot, bool bChangeCampOnly = false);
 
     URosterActionButton* MakeButton(const TCHAR* Label, ERosterAction Action,
                                     const struct FLinearColor& BG);

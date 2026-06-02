@@ -87,6 +87,16 @@ public:
     UFUNCTION(BlueprintCallable, Category = "JRPG|Encounter")
     void BeginEncounter(AEnemyEncounter* Encounter, bool bPlayerHasInitiative = false);
 
+    /**
+     * Reward a stealth instant-kill. Grants a RANDOM 20–30% of the encounter's
+     * XP (lead member only) and of its gold + material, and drops the
+     * encounter's loot (weapon / chips / armor) in FULL — owned items are
+     * skipped so there are no duplicates. Called by AEnemyEncounter::Assassinate
+     * right before the encounter is destroyed.
+     */
+    UFUNCTION(BlueprintCallable, Category = "JRPG|Encounter")
+    void AwardAssassinationRewards(AEnemyEncounter* Encounter);
+
     // -------------------------------------------------------------------------
     //  Overworld protocol use
     // -------------------------------------------------------------------------

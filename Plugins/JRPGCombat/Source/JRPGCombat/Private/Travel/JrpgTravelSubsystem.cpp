@@ -88,6 +88,24 @@ void UJrpgTravelSubsystem::LeaveCamp()
     UGameplayStatics::OpenLevel(this, OpenWorldLevelName);
 }
 
+void UJrpgTravelSubsystem::TravelToLevelAtTransform(FName TargetLevel, const FTransform& Where)
+{
+    if (TargetLevel == NAME_None)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[Travel] TravelToLevelAtTransform called with NAME_None target"));
+        return;
+    }
+
+    PendingArrivalTag = NAME_None;
+    bConsumeReturnTransformOnArrival = false;
+    PendingArrivalTransform = Where;
+
+    UE_LOG(LogTemp, Log, TEXT("[Travel] Opening level '%s' to explicit transform %s"),
+        *TargetLevel.ToString(), *Where.GetLocation().ToString());
+
+    UGameplayStatics::OpenLevel(this, TargetLevel);
+}
+
 void UJrpgTravelSubsystem::TeleportPawnTo(APawn* Pawn, const FTransform& Where)
 {
     if (!Pawn) { return; }
@@ -139,6 +157,13 @@ void UJrpgTravelSubsystem::ApplyPendingArrival(UWorld* World)
                 if (APawn* P = GetPlayerPawn(WeakWorld.Get()))
                 {
                     // Same logic, but inlined to avoid re-deferring further.
+                    if (PendingArrivalTransform.IsSet())
+                    {
+                        TeleportPawnTo(P, PendingArrivalTransform.GetValue());
+                        PendingArrivalTransform.Reset();
+                        ClearPendingArrival();
+                        return;
+                    }
                     if (bConsumeReturnTransformOnArrival && CampReturnTransform.IsSet())
                     {
                         TeleportPawnTo(P, CampReturnTransform.GetValue());
@@ -162,6 +187,17 @@ void UJrpgTravelSubsystem::ApplyPendingArrival(UWorld* World)
                 }
             }
         });
+        return;
+    }
+
+    // Explicit arrival transform (Give-Up respawn) wins over everything and is
+    // consumed once used.
+    if (PendingArrivalTransform.IsSet())
+    {
+        TeleportPawnTo(Pawn, PendingArrivalTransform.GetValue());
+        UE_LOG(LogTemp, Log, TEXT("[Travel] Arrived at explicit transform"));
+        PendingArrivalTransform.Reset();
+        ClearPendingArrival();
         return;
     }
 

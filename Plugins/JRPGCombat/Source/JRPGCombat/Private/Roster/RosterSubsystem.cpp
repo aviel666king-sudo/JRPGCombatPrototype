@@ -340,6 +340,72 @@ bool URosterSubsystem::OwnsChip(UCharacterChipDataAsset* C) const
     return C && OwnedChips.Contains(C);
 }
 
+// -----------------------------------------------------------------------------
+//  Battle-entry snapshot + last rested checkpoint
+// -----------------------------------------------------------------------------
+
+void URosterSubsystem::SnapshotBattleEntry(const TArray<ACombatantBase*>& LiveParty)
+{
+    // Make sure the records reflect the live party's current HP first.
+    SaveHPFromParty(LiveParty);
+
+    SnapshotHP.Reset();
+    SnapshotHP.Reserve(Members.Num());
+    for (const FPartyMemberRecord& Rec : Members)
+    {
+        SnapshotHP.Add(Rec.CurrentHP);
+    }
+
+    SnapshotHeal   = HealCharges;
+    SnapshotRevive = ReviveCharges;
+    SnapshotAP     = APCharges;
+
+    bHasBattleSnapshot = true;
+}
+
+bool URosterSubsystem::RestoreBattleEntry(const TArray<ACombatantBase*>& LiveParty)
+{
+    if (!bHasBattleSnapshot) { return false; }
+
+    for (int32 i = 0; i < Members.Num(); ++i)
+    {
+        if (SnapshotHP.IsValidIndex(i))
+        {
+            Members[i].CurrentHP = FMath::Clamp(SnapshotHP[i], 0.f, Members[i].MaxHP);
+        }
+    }
+
+    HealCharges   = SnapshotHeal;
+    ReviveCharges = SnapshotRevive;
+    APCharges     = SnapshotAP;
+
+    // Push restored HP onto any live actors (revives downed members so the
+    // retry starts them exactly as they entered).
+    for (ACombatantBase* Base : LiveParty)
+    {
+        const int32 Idx = FindRecordForActor(Base);
+        if (Idx == INDEX_NONE || !Base) { continue; }
+
+        const float Want = Members[Idx].CurrentHP;
+        if (Base->GetCurrentHP() <= 0.f && Want > 0.f)
+        {
+            Base->Revive(FMath::Clamp(Want / FMath::Max(1.f, Base->GetMaxHP()), 0.01f, 1.f));
+        }
+        const float Live = Base->GetCurrentHP();
+        if (Want > Live)      { Base->RestoreResource(EResourceType::HP, Want - Live); }
+        else if (Want < Live) { Base->SpendResource(EResourceType::HP, Live - Want); }
+    }
+    return true;
+}
+
+void URosterSubsystem::SetLastRestedCheckpoint(FName LevelName, FName CheckpointId, const FTransform& Where)
+{
+    LastRestedLevel        = LevelName;
+    LastRestedCheckpointId = CheckpointId;
+    LastRestedTransform    = Where;
+    bHasLastRested         = true;
+}
+
 void URosterSubsystem::GetAvailableWeapons(UClass* CharacterClass, bool bGun,
                                            TArray<UCharacterWeaponDataAsset*>& Out) const
 {

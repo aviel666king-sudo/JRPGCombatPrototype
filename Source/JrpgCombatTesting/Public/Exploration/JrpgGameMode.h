@@ -97,6 +97,15 @@ public:
     UFUNCTION(BlueprintCallable, Category = "JRPG|Encounter")
     void AwardAssassinationRewards(AEnemyEncounter* Encounter);
 
+    /** Post-defeat: restart the SAME fight with the exact entry conditions
+     *  (party HP + charges snapshotted when the fight began). */
+    UFUNCTION(BlueprintCallable, Category = "JRPG|Encounter")
+    void RetryBattle();
+
+    /** Post-defeat: heal up and reload from the last rested checkpoint. */
+    UFUNCTION(BlueprintCallable, Category = "JRPG|Encounter")
+    void GiveUpToLastCheckpoint();
+
     // -------------------------------------------------------------------------
     //  Overworld protocol use
     // -------------------------------------------------------------------------
@@ -194,6 +203,23 @@ protected:
     /** The encounter that triggered the current combat. Cleared on victory. */
     UPROPERTY()
     TObjectPtr<AEnemyEncounter> ActiveEncounter;
+
+    /** Initiative of the current/last fight — replayed verbatim on Retry. */
+    bool bLastEncounterInitiative = false;
+
+    /** Optional designer-supplied defeat screen. Falls back to the C++
+     *  UDefeatScreenWidget when unset. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "JRPG|UI")
+    TSubclassOf<class UUserWidget> DefeatWidgetClass;
+
+    UPROPERTY()
+    TObjectPtr<class UDefeatScreenWidget> DefeatWidget;
+
+    /** Build + show the defeat screen with Retry / Give Up. */
+    void ShowDefeatScreen();
+
+    /** Remove the defeat screen if it's up. */
+    void DismissDefeatScreen();
 
     /** Neighbouring encounters pulled into the active fight by the merging
      *  mechanic. Destroyed alongside ActiveEncounter on victory. */

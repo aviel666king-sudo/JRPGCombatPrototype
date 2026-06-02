@@ -226,6 +226,31 @@ public:
     bool TryUpgradeChip(UCharacterChipDataAsset* C);
     bool TryUpgradeArmor(UCharacterArmorDataAsset* A);
 
+    // -------------------------------------------------------------------------
+    //  Battle-entry snapshot — captures the exact party HP + shared charges at
+    //  the instant a fight begins, so a post-defeat "Retry" restores the same
+    //  starting conditions (e.g. you re-enter at 50/100, not full).
+    // -------------------------------------------------------------------------
+
+    /** Sync records from the live party, then snapshot per-member HP + charges. */
+    void SnapshotBattleEntry(const TArray<ACombatantBase*>& LiveParty);
+
+    /** Write the snapshot back onto the records + charges, then push HP onto the
+     *  live party. Returns false if no snapshot was taken. */
+    bool RestoreBattleEntry(const TArray<ACombatantBase*>& LiveParty);
+
+    bool HasBattleSnapshot() const { return bHasBattleSnapshot; }
+
+    // -------------------------------------------------------------------------
+    //  Last rested checkpoint — where "Give Up" sends the player (fully healed).
+    // -------------------------------------------------------------------------
+
+    void SetLastRestedCheckpoint(FName LevelName, FName CheckpointId, const FTransform& Where);
+    bool  HasLastRested() const { return bHasLastRested; }
+    FName GetLastRestedLevel() const { return LastRestedLevel; }
+    FName GetLastRestedCheckpointId() const { return LastRestedCheckpointId; }
+    FTransform GetLastRestedTransform() const { return LastRestedTransform; }
+
 private:
 
     UPROPERTY()
@@ -254,6 +279,17 @@ private:
 
     UPROPERTY()
     TArray<TObjectPtr<UCharacterChipDataAsset>> OwnedChips;
+
+    // Battle-entry snapshot (transient; not part of the save blob).
+    bool bHasBattleSnapshot = false;
+    TArray<float> SnapshotHP;          // parallel to Members
+    int32 SnapshotHeal = 0, SnapshotRevive = 0, SnapshotAP = 0;
+
+    // Last rested checkpoint (part of the save blob in Phase 3).
+    bool  bHasLastRested = false;
+    FName LastRestedLevel = NAME_None;
+    FName LastRestedCheckpointId = NAME_None;
+    FTransform LastRestedTransform = FTransform::Identity;
 
     /** Re-apply every record onto its live actor (re-stat after an upgrade). */
     void RefreshAllMembers();

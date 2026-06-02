@@ -200,6 +200,17 @@ void ACheckpoint::Rest(APawn* Resting)
         }
     }
 
+    // 6. Record this as the "last rested" checkpoint so a post-defeat Give Up
+    //    sends the player back here (fully healed). Camp checkpoints count too.
+    if (UGameInstance* GI = World->GetGameInstance())
+    {
+        if (URosterSubsystem* Roster = GI->GetSubsystem<URosterSubsystem>())
+        {
+            Roster->SetLastRestedCheckpoint(
+                GetCanonicalLevelName(World), GetCheckpointId(), GetActorTransform());
+        }
+    }
+
     UE_LOG(LogTemp, Log, TEXT("[Checkpoint] Rest complete"));
 
     // Temporary on-screen feedback. Removed once the proper HUD lands.

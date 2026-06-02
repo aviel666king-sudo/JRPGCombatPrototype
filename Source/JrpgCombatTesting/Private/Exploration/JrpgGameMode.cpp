@@ -10,6 +10,10 @@
 #include "Characters/Enemy/EnemyCombatant.h"
 #include "Core/DangerManager.h"
 #include "Roster/RosterSubsystem.h"
+#include "Travel/JrpgTravelSubsystem.h"
+#include "Travel/TravelArrivalPoint.h"
+#include "UI/DefeatScreenWidget.h"
+#include "Misc/Paths.h"
 #include "Equipment/CharacterWeaponDataAsset.h"
 #include "Equipment/CharacterChipDataAsset.h"
 #include "Equipment/CharacterArmorDataAsset.h"
@@ -258,8 +262,19 @@ void AJrpgGameMode::BeginEncounter(AEnemyEncounter* Encounter, bool bPlayerHasIn
         BattleManager->OnBattleEnded.AddDynamic(this, &AJrpgGameMode::HandleBattleEnded);
     }
 
-    ActiveEncounter = Encounter;
-    WorldMode       = EWorldMode::InCombat;
+    ActiveEncounter         = Encounter;
+    bLastEncounterInitiative = bPlayerHasInitiative;
+    WorldMode               = EWorldMode::InCombat;
+
+    // Snapshot party HP + shared charges so a post-defeat Retry restores the
+    // exact conditions this fight began with.
+    if (UGameInstance* GI = GetGameInstance())
+    {
+        if (URosterSubsystem* RosterSub = GI->GetSubsystem<URosterSubsystem>())
+        {
+            RosterSub->SnapshotBattleEntry(PlayerParty);
+        }
+    }
 
     // Freeze EVERY encounter in the world — including the active one. The
     // fight itself runs on spawned combatants at the arena, not on the
@@ -430,10 +445,157 @@ void AJrpgGameMode::HandleBattleEnded(bool bVictory)
     }
     else
     {
-        // Defeat — leave things as they are for now. A real implementation would
-        // show a Game Over screen. TODO: add Game Over flow.
-        UE_LOG(LogTemp, Warning, TEXT("[JrpgGameMode] Defeat — Game Over flow not implemented yet."));
+        // Defeat — tear down the combat HUD and show the Retry / Give Up screen.
+        // We deliberately DON'T destroy the enemies or the encounter here: Retry
+        // re-runs the same fight, Give Up reloads from the checkpoint (which
+        // resets the level anyway).
+        if (BattleManager && BattleManager->CombatHUD)
+        {
+            BattleManager->CombatHUD->RemoveFromParent();
+            BattleManager->CombatHUD = nullptr;
+        }
+        ShowDefeatScreen();
     }
+}
+
+// -----------------------------------------------------------------------------
+//  Defeat flow — Retry / Give Up
+// -----------------------------------------------------------------------------
+
+namespace
+{
+    /** Canonical short level name (strips PIE prefix + path). */
+    FName CanonicalLevelName(const UWorld* World)
+    {
+        if (!World) { return NAME_None; }
+        FString MapName = World->GetMapName();
+        MapName.RemoveFromStart(World->StreamingLevelsPrefix);
+        return FName(*FPaths::GetBaseFilename(MapName));
+    }
+}
+
+void AJrpgGameMode::ShowDefeatScreen()
+{
+    APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0);
+    if (!PC) { return; }
+
+    UClass* WidgetClass = DefeatWidgetClass ? DefeatWidgetClass.Get() : UDefeatScreenWidget::StaticClass();
+    DefeatWidget = CreateWidget<UDefeatScreenWidget>(PC, WidgetClass);
+    if (!DefeatWidget) { return; }
+
+    // Tell the player where Give Up will send them.
+    if (UGameInstance* GI = GetGameInstance())
+    {
+        if (URosterSubsystem* Roster = GI->GetSubsystem<URosterSubsystem>())
+        {
+            if (Roster->HasLastRested())
+            {
+                DefeatWidget->GiveUpLabel = FText::FromString(FString::Printf(
+                    TEXT("Return to %s"), *Roster->GetLastRestedCheckpointId().ToString()));
+            }
+        }
+    }
+
+    DefeatWidget->OnRetryRequested  = [this]() { RetryBattle(); };
+    DefeatWidget->OnGiveUpRequested = [this]() { GiveUpToLastCheckpoint(); };
+    DefeatWidget->AddToViewport(100);
+
+    PC->bShowMouseCursor = true;
+    FInputModeUIOnly Mode;
+    Mode.SetWidgetToFocus(DefeatWidget->TakeWidget());
+    PC->SetInputMode(Mode);
+}
+
+void AJrpgGameMode::DismissDefeatScreen()
+{
+    if (DefeatWidget)
+    {
+        DefeatWidget->RemoveFromParent();
+        DefeatWidget = nullptr;
+    }
+    if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
+    {
+        PC->bShowMouseCursor = false;
+        PC->SetInputMode(FInputModeGameOnly());
+    }
+}
+
+void AJrpgGameMode::RetryBattle()
+{
+    if (!ActiveEncounter) { return; }
+
+    DismissDefeatScreen();
+
+    // Clear out the corpses from the lost fight; BeginEncounter spawns fresh.
+    for (TObjectPtr<ACombatantBase> Enemy : SpawnedEnemies)
+    {
+        if (Enemy) { Enemy->Destroy(); }
+    }
+    SpawnedEnemies.Reset();
+
+    // Restore the exact party HP + charges captured when the fight began.
+    if (UGameInstance* GI = GetGameInstance())
+    {
+        if (URosterSubsystem* Roster = GI->GetSubsystem<URosterSubsystem>())
+        {
+            Roster->RestoreBattleEntry(PlayerParty);
+        }
+    }
+
+    AEnemyEncounter* Encounter = ActiveEncounter;
+    const bool bInitiative = bLastEncounterInitiative;
+
+    // BeginEncounter early-returns while WorldMode == InCombat; drop back to
+    // Exploring so the replay runs.
+    WorldMode = EWorldMode::Exploring;
+    BeginEncounter(Encounter, bInitiative);
+}
+
+void AJrpgGameMode::GiveUpToLastCheckpoint()
+{
+    DismissDefeatScreen();
+
+    UWorld* World = GetWorld();
+    UGameInstance* GI = GetGameInstance();
+    URosterSubsystem* Roster = GI ? GI->GetSubsystem<URosterSubsystem>() : nullptr;
+    UJrpgTravelSubsystem* Travel = GI ? GI->GetSubsystem<UJrpgTravelSubsystem>() : nullptr;
+
+    // Full heal (records + any live actors) before the reload carries it over.
+    if (Roster) { Roster->RestockAndHeal(PlayerParty); }
+
+    const FName CurrentLevel = CanonicalLevelName(World);
+    WorldMode = EWorldMode::Exploring;
+
+    // Respawn rule (per-level, Souls-like):
+    //   - Rested at a checkpoint IN THIS LEVEL → reload there.
+    //   - Otherwise → reload at the level's entry arrival point (the spawn by
+    //     the portal you came in through), falling back to PlayerStart.
+    const bool bRestedHere = Roster && Roster->HasLastRested()
+        && Roster->GetLastRestedLevel() == CurrentLevel;
+
+    if (!Travel)
+    {
+        UGameplayStatics::OpenLevel(this, CurrentLevel);
+        return;
+    }
+
+    if (bRestedHere)
+    {
+        Travel->TravelToLevelAtTransform(CurrentLevel, Roster->GetLastRestedTransform());
+        return;
+    }
+
+    // No rest in this level — find the entry arrival point's transform (stable
+    // across reload since it's placed in the level) and land there.
+    FTransform EntryXf;
+    bool bFoundEntry = false;
+    for (TActorIterator<ATravelArrivalPoint> It(World); It; ++It)
+    {
+        if (*It) { EntryXf = (*It)->GetActorTransform(); bFoundEntry = true; break; }
+    }
+
+    if (bFoundEntry) { Travel->TravelToLevelAtTransform(CurrentLevel, EntryXf); }
+    else             { Travel->TravelToLevel(CurrentLevel, NAME_None); }  // PlayerStart fallback
 }
 
 void AJrpgGameMode::AwardAssassinationRewards(AEnemyEncounter* Encounter)

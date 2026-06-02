@@ -71,6 +71,13 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Travel")
     void TeleportPawnTo(APawn* Pawn, const FTransform& Where);
 
+    /** Open TargetLevel and, once loaded, teleport the player to an explicit
+     *  world transform (no arrival tag needed). Used by the post-defeat
+     *  "Give Up" flow to send the player to their last rested checkpoint when
+     *  it lives in a different level than the fight. */
+    UFUNCTION(BlueprintCallable, Category = "Travel")
+    void TravelToLevelAtTransform(FName TargetLevel, const FTransform& Where);
+
     /** Name of the Open World level. Default matches the planned L_Overworld
      *  stub — adjust per project / set in BP defaults. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Travel")
@@ -104,6 +111,10 @@ private:
     FName PendingArrivalTag = NAME_None;
     TOptional<FTransform> CampReturnTransform;
     bool bConsumeReturnTransformOnArrival = false;
+
+    /** Explicit arrival transform (e.g. Give-Up respawn). When set, it wins
+     *  over the arrival tag and is consumed on the next arrival. */
+    TOptional<FTransform> PendingArrivalTransform;
 
     FDelegateHandle PostLoadMapHandle;
 };

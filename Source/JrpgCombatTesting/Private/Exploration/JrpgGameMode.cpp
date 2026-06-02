@@ -10,6 +10,7 @@
 #include "Characters/Enemy/EnemyCombatant.h"
 #include "Core/DangerManager.h"
 #include "Roster/RosterSubsystem.h"
+#include "Persistence/WorldStateSubsystem.h"
 #include "Travel/JrpgTravelSubsystem.h"
 #include "Travel/TravelArrivalPoint.h"
 #include "UI/DefeatScreenWidget.h"
@@ -449,23 +450,37 @@ void AJrpgGameMode::HandleBattleEnded(bool bVictory)
             PC->bShowMouseCursor = false;
         }
 
-        // Destroy spawned enemies — they're gone from the world for good.
+        // Destroy spawned combat enemies — they only exist for the fight.
         for (TObjectPtr<ACombatantBase> Enemy : SpawnedEnemies)
         {
             if (Enemy) { Enemy->Destroy(); }
         }
         SpawnedEnemies.Reset();
 
-        // Destroy the encounter actor so the player can't trigger it again.
-        if (ActiveEncounter) { ActiveEncounter->Destroy(); }
+        // Retire the world encounter(s): bosses (one-time) are recorded + gone
+        // for good; regular encounters are disabled and parked in
+        // DefeatedEncounters so a checkpoint Rest can respawn them (Souls-like).
+        UWorldStateSubsystem* WorldState = GetGameInstance()
+            ? GetGameInstance()->GetSubsystem<UWorldStateSubsystem>() : nullptr;
+        auto RetireEncounter = [&](AEnemyEncounter* Enc)
+        {
+            if (!Enc) { return; }
+            if (Enc->bOneTimeEncounter)
+            {
+                if (WorldState) { WorldState->MarkDone(Enc->GetPersistentKey()); }
+                Enc->Destroy();
+            }
+            else
+            {
+                Enc->SetExplorationActive(false);   // hidden + inert until rest
+                DefeatedEncounters.AddUnique(Enc);
+            }
+        };
+        RetireEncounter(ActiveEncounter);
         ActiveEncounter = nullptr;
-
-        // Destroy every neighbour that was merged into this fight — they've
-        // been consumed by the ambush. Doing this BEFORE the ResetToSpawn
-        // sweep below means the iterator there naturally skips them.
         for (TObjectPtr<AEnemyEncounter> Merged : MergedEncounters)
         {
-            if (Merged) { Merged->Destroy(); }
+            RetireEncounter(Merged);
         }
         MergedEncounters.Reset();
 
@@ -495,11 +510,12 @@ void AJrpgGameMode::HandleBattleEnded(bool bVictory)
 
         // Reset every surviving encounter back to spawn AND re-enable them —
         // any enemy that was mid-wander when the fight started is teleported
-        // home so the player isn't immediately re-overlapped on exit.
+        // home so the player isn't immediately re-overlapped on exit. Skip the
+        // ones we just defeated: they stay parked until the next rest.
         for (TActorIterator<AEnemyEncounter> It(GetWorld()); It; ++It)
         {
             AEnemyEncounter* Enc = *It;
-            if (Enc)
+            if (Enc && !DefeatedEncounters.Contains(Enc))
             {
                 Enc->ResetToSpawn();
                 Enc->SetExplorationActive(true);
@@ -525,6 +541,19 @@ void AJrpgGameMode::HandleBattleEnded(bool bVictory)
         }
         ShowDefeatScreen();
     }
+}
+
+void AJrpgGameMode::RespawnDefeatedEncounters()
+{
+    for (TObjectPtr<AEnemyEncounter> Enc : DefeatedEncounters)
+    {
+        if (Enc)
+        {
+            Enc->ResetToSpawn();
+            Enc->SetExplorationActive(true);
+        }
+    }
+    DefeatedEncounters.Reset();
 }
 
 // -----------------------------------------------------------------------------

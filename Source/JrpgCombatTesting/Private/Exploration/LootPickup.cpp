@@ -14,6 +14,7 @@
 #include "Equipment/CharacterChipDataAsset.h"
 #include "Equipment/CraftingMaterialDataAsset.h"
 #include "Roster/RosterSubsystem.h"
+#include "Persistence/WorldStateSubsystem.h"
 
 ALootPickup::ALootPickup()
 {
@@ -34,20 +35,19 @@ void ALootPickup::BeginPlay()
 {
     Super::BeginPlay();
 
-    // If this pickup only hands out items the player already owns (and no
-    // gold / materials), it's redundant — never show it. Lets a level reload
-    // skip a piece of loot the player grabbed on a previous visit.
+    // Skip this pickup entirely if it was already collected (persistent), or
+    // if it only hands out items the player already owns (redundant).
     if (UWorld* World = GetWorld())
     {
         if (UGameInstance* GI = World->GetGameInstance())
         {
+            if (UWorldStateSubsystem* WS = GI->GetSubsystem<UWorldStateSubsystem>())
+            {
+                if (WS->IsDone(GetPersistentKey())) { Destroy(); return; }
+            }
             if (URosterSubsystem* Roster = GI->GetSubsystem<URosterSubsystem>())
             {
-                if (IsFullyRedundant(Roster))
-                {
-                    Destroy();
-                    return;
-                }
+                if (IsFullyRedundant(Roster)) { Destroy(); return; }
             }
         }
     }
@@ -118,6 +118,12 @@ void ALootPickup::Interact()
     }
     UE_LOG(LogTemp, Log, TEXT("[LootPickup] %s granted: %s"), *GetName(), *Summary);
 
+    // Record as collected so it never reappears (this session + after load).
+    if (UWorldStateSubsystem* WS = GI->GetSubsystem<UWorldStateSubsystem>())
+    {
+        WS->MarkDone(GetPersistentKey());
+    }
+
     Destroy();
 }
 
@@ -129,6 +135,12 @@ void ALootPickup::DrawInteractPrompt()
     DrawDebugString(GetWorld(), Base, TEXT("[E] Pick up"), nullptr, FColor::Green, 0.f, true);
 }
 #endif
+
+FName ALootPickup::GetPersistentKey() const
+{
+    const FName Id = (PersistentId != NAME_None) ? PersistentId : GetFName();
+    return UWorldStateSubsystem::MakeKey(this, TEXT("loot"), Id);
+}
 
 bool ALootPickup::IsFullyRedundant(URosterSubsystem* Roster) const
 {

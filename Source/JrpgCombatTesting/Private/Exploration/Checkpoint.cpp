@@ -171,10 +171,9 @@ void ACheckpoint::Rest(APawn* Resting)
         }
     }
 
-    // 4. Reset all encounters back to home (clears chase/investigate/alert).
-    //    NOTE: encounters destroyed in previous victories DON'T respawn from
-    //    this. Full Souls-like respawn requires a persistence tracker — coming
-    //    in Commit B once SaveGame lands.
+    // 4. Reset all encounters back to home (clears chase/investigate/alert),
+    //    then respawn any regular encounters defeated since the last rest
+    //    (Souls-like). One-time bosses stay dead.
     int32 ResetCount = 0;
     for (TActorIterator<AEnemyEncounter> It(World); It; ++It)
     {
@@ -184,6 +183,7 @@ void ACheckpoint::Rest(APawn* Resting)
             ++ResetCount;
         }
     }
+    if (GM) { GM->RespawnDefeatedEncounters(); }
     UE_LOG(LogTemp, Log, TEXT("[Checkpoint] Reset %d encounters to spawn"), ResetCount);
 
     // 5. Register this checkpoint as visited so it appears in the fast-travel

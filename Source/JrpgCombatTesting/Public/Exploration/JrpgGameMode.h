@@ -107,6 +107,11 @@ public:
     UFUNCTION(BlueprintCallable, Category = "JRPG|Encounter")
     void GiveUpToLastCheckpoint();
 
+    /** Re-activate every regular encounter defeated since the last rest
+     *  (Souls-like respawn). Called by ACheckpoint::Rest. Bosses stay dead. */
+    UFUNCTION(BlueprintCallable, Category = "JRPG|Encounter")
+    void RespawnDefeatedEncounters();
+
     // -------------------------------------------------------------------------
     //  Overworld protocol use
     // -------------------------------------------------------------------------
@@ -265,6 +270,12 @@ protected:
     /** Enemies spawned for the current combat. Destroyed on victory. */
     UPROPERTY()
     TArray<TObjectPtr<ACombatantBase>> SpawnedEnemies;
+
+    /** Regular encounters defeated since the last rest — disabled (not
+     *  destroyed) so RespawnDefeatedEncounters can bring them back. Bosses are
+     *  never added here. Session-only; a level reload re-places them anyway. */
+    UPROPERTY()
+    TArray<TObjectPtr<AEnemyEncounter>> DefeatedEncounters;
 
     // -------------------------------------------------------------------------
     //  Drops — awarded to the persistent roster on victory.

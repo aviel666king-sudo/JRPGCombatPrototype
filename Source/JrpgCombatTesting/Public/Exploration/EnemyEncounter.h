@@ -103,6 +103,26 @@ public:
     TObjectPtr<ABattleArena> AssignedArena;
 
     // -------------------------------------------------------------------------
+    //  Persistence
+    //
+    //  Regular encounters respawn when the player rests (Souls-like grind).
+    //  Mark bosses / unique fights bOneTimeEncounter = true: on defeat they're
+    //  recorded in the WorldStateSubsystem and never come back — not on rest,
+    //  not after a save/load.
+    // -------------------------------------------------------------------------
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Encounter|Persistence")
+    bool bOneTimeEncounter = false;
+
+    /** Stable id for the one-time record. Blank → falls back to the actor name. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Encounter|Persistence")
+    FName EncounterId;
+
+    /** WorldState key for this encounter's one-time clear. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Encounter|Persistence")
+    FName GetPersistentKey() const;
+
+    // -------------------------------------------------------------------------
     //  Encounter merging (Phase F)
     //
     //  Each encounter holds 3 base enemies (EnemyClasses) PLUS one "elite"

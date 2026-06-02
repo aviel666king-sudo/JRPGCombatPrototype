@@ -9,6 +9,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "Engine/GameInstance.h"
+#include "Persistence/WorldStateSubsystem.h"
 #include "DrawDebugHelpers.h"
 #include "NavigationSystem.h"
 #include "NavigationPath.h"
@@ -55,6 +56,22 @@ AEnemyEncounter::AEnemyEncounter()
 void AEnemyEncounter::BeginPlay()
 {
     Super::BeginPlay();
+
+    // One-time encounters (bosses) that were already cleared never come back.
+    if (bOneTimeEncounter)
+    {
+        if (UGameInstance* GI = GetGameInstance())
+        {
+            if (UWorldStateSubsystem* WS = GI->GetSubsystem<UWorldStateSubsystem>())
+            {
+                if (WS->IsDone(GetPersistentKey()))
+                {
+                    Destroy();
+                    return;
+                }
+            }
+        }
+    }
 
     // Snapshot the spawn location — chase falls back to this when giving up.
     HomeLocation = GetActorLocation();
@@ -712,6 +729,12 @@ bool AEnemyEncounter::IsOverleveledForAssassination() const
     return false;
 }
 
+FName AEnemyEncounter::GetPersistentKey() const
+{
+    const FName Id = (EncounterId != NAME_None) ? EncounterId : GetFName();
+    return UWorldStateSubsystem::MakeKey(this, TEXT("enc"), Id);
+}
+
 void AEnemyEncounter::Assassinate(APawn* /*Attacker*/)
 {
     UE_LOG(LogTemp, Warning,
@@ -724,6 +747,18 @@ void AEnemyEncounter::Assassinate(APawn* /*Attacker*/)
     if (AJrpgGameMode* GM = Cast<AJrpgGameMode>(UGameplayStatics::GetGameMode(this)))
     {
         GM->AwardAssassinationRewards(this);
+    }
+
+    // A one-time (boss) target assassinated still counts as permanently cleared.
+    if (bOneTimeEncounter)
+    {
+        if (UGameInstance* GI = GetGameInstance())
+        {
+            if (UWorldStateSubsystem* WS = GI->GetSubsystem<UWorldStateSubsystem>())
+            {
+                WS->MarkDone(GetPersistentKey());
+            }
+        }
     }
 
     Destroy();

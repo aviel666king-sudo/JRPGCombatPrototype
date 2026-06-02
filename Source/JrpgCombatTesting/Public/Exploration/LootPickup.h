@@ -45,6 +45,13 @@ public:
               meta = (ClampMin = "50.0"))
     float PickupRadius = 150.f;
 
+    /** Stable id for persistence. Once collected, this pickup never reappears
+     *  (tracked in the WorldStateSubsystem / save). Leave blank to fall back to
+     *  the actor's name — fine for one-off placements, but set it explicitly so
+     *  an editor rename doesn't resurrect a collected pickup. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loot")
+    FName PersistentId;
+
     // -------------------------------------------------------------------------
     //  What this pickup grants (any combination).
     // -------------------------------------------------------------------------
@@ -108,6 +115,9 @@ protected:
     /** True if this pickup grants no gold/materials and every item it would
      *  give is already owned — i.e. there's nothing left to collect. */
     bool IsFullyRedundant(URosterSubsystem* Roster) const;
+
+    /** WorldState key identifying this exact placement. */
+    FName GetPersistentKey() const;
 
 #if !UE_BUILD_SHIPPING
     void DrawInteractPrompt();

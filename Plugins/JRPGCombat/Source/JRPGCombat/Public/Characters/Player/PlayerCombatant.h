@@ -109,6 +109,12 @@ public:
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Character|Progression")
     int32 GetXPForNextLevel() const;
 
+    /** XP required to advance FROM an arbitrary level. Single source of truth
+     *  for the curve, so UI (e.g. the victory XP bar) can replay thresholds for
+     *  levels other than the character's current one. */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Character|Progression")
+    static int32 XPRequiredForLevel(int32 ForLevel);
+
     /** Add XP. May trigger one or more LevelUp() calls if the haul covers
      *  multiple levels. Safe to call mid-battle; stat-growth applies to
      *  BaseStats and propagates at the next InitializeForBattle. */

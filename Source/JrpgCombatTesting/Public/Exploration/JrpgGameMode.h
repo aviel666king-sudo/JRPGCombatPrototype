@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
 #include "CombatTypes.h"  // EProtocolType
+#include "UI/VictoryScreenWidget.h"  // FVictoryMemberXP
 #include "JrpgGameMode.generated.h"
 
 class ACombatantBase;
@@ -207,6 +208,11 @@ protected:
     /** Initiative of the current/last fight — replayed verbatim on Retry. */
     bool bLastEncounterInitiative = false;
 
+    /** Each member's level + within-level XP at fight start — drives the
+     *  animated victory XP bar / level-up callouts. */
+    TArray<int32> PreLevels;
+    TArray<int32> PreXP;
+
     /** Optional designer-supplied defeat screen. Falls back to the C++
      *  UDefeatScreenWidget when unset. */
     UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "JRPG|UI")
@@ -215,11 +221,26 @@ protected:
     UPROPERTY()
     TObjectPtr<class UDefeatScreenWidget> DefeatWidget;
 
+    /** Optional designer-supplied victory screen. Falls back to the C++
+     *  UVictoryScreenWidget when unset. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "JRPG|UI")
+    TSubclassOf<class UUserWidget> VictoryWidgetClass;
+
+    UPROPERTY()
+    TObjectPtr<class UVictoryScreenWidget> VictoryWidget;
+
     /** Build + show the defeat screen with Retry / Give Up. */
     void ShowDefeatScreen();
 
     /** Remove the defeat screen if it's up. */
     void DismissDefeatScreen();
+
+    /** Build + show the victory results panel (animated XP rows + spoils). */
+    void ShowVictoryScreen(const TArray<FVictoryMemberXP>& Members,
+                           const TArray<FString>& SpoilLines);
+
+    /** Continue button — dismiss the victory panel + restore game input. */
+    void ContinueAfterVictory();
 
     /** Neighbouring encounters pulled into the active fight by the merging
      *  mechanic. Destroyed alongside ActiveEncounter on victory. */

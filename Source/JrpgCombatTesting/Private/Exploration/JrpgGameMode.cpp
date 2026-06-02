@@ -13,6 +13,7 @@
 #include "Travel/JrpgTravelSubsystem.h"
 #include "Travel/TravelArrivalPoint.h"
 #include "UI/DefeatScreenWidget.h"
+#include "UI/VictoryScreenWidget.h"
 #include "Misc/Paths.h"
 #include "Equipment/CharacterWeaponDataAsset.h"
 #include "Equipment/CharacterChipDataAsset.h"
@@ -276,6 +277,17 @@ void AJrpgGameMode::BeginEncounter(AEnemyEncounter* Encounter, bool bPlayerHasIn
         }
     }
 
+    // Snapshot each member's level + within-level XP so the victory screen can
+    // animate the bar from the pre-fight state and flag level-ups.
+    PreLevels.Reset();
+    PreXP.Reset();
+    for (ACombatantBase* P : PlayerParty)
+    {
+        const APlayerCombatant* PC = Cast<APlayerCombatant>(P);
+        PreLevels.Add(PC ? PC->Level : 1);
+        PreXP.Add(PC ? PC->CurrentXP : 0);
+    }
+
     // Freeze EVERY encounter in the world — including the active one. The
     // fight itself runs on spawned combatants at the arena, not on the
     // encounter actor, so the encounter has no business being visible (its
@@ -332,6 +344,12 @@ void AJrpgGameMode::HandleBattleEnded(bool bVictory)
 
     if (bVictory)
     {
+        // Result accumulators for the victory screen.
+        TArray<FVictoryMemberXP> VictoryMembers;
+        TArray<FString> SpoilLines;
+        TArray<FString> LootNames;
+        int32 GoldGained = 0, MaterialGained = 0;
+
         // ── Award drops to the persistent roster BEFORE we destroy the
         //    encounter + spawned enemies below. ─────────────────────────────
         if (UGameInstance* GI = GetGameInstance())
@@ -339,33 +357,80 @@ void AJrpgGameMode::HandleBattleEnded(bool bVictory)
             if (URosterSubsystem* Roster = GI->GetSubsystem<URosterSubsystem>())
             {
                 const int32 NumEnemies = FMath::Max(1, SpawnedEnemies.Num());
-                Roster->AddGold(NumEnemies * GoldPerEnemy);
+                GoldGained = NumEnemies * GoldPerEnemy;
+                Roster->AddGold(GoldGained);
                 if (DefaultDropMaterial)
                 {
-                    Roster->AddMaterial(DefaultDropMaterial, NumEnemies * MaterialPerEnemy);
+                    MaterialGained = NumEnemies * MaterialPerEnemy;
+                    Roster->AddMaterial(DefaultDropMaterial, MaterialGained);
                 }
 
-                int32 DroppedItems = 0;
                 auto AwardDrops = [&](AEnemyEncounter* Enc)
                 {
                     if (!Enc) { return; }
-                    // Only award (and count toward the "new gear" toast) items the
-                    // player doesn't already own — no duplicates, no noise.
+                    // Only award items the player doesn't already own — no dups.
                     if (Enc->WeaponDrop && !Roster->OwnsWeapon(Enc->WeaponDrop))
-                    { Roster->AddOwnedWeapon(Enc->WeaponDrop); ++DroppedItems; }
+                    { Roster->AddOwnedWeapon(Enc->WeaponDrop); LootNames.Add(Enc->WeaponDrop->DisplayName.ToString()); }
                     for (const TObjectPtr<UCharacterChipDataAsset>& C : Enc->ChipDrops)
-                    { if (C && !Roster->OwnsChip(C)) { Roster->AddOwnedChip(C); ++DroppedItems; } }
+                    { if (C && !Roster->OwnsChip(C)) { Roster->AddOwnedChip(C); LootNames.Add(C->DisplayName.ToString()); } }
                     for (const TObjectPtr<UCharacterArmorDataAsset>& A : Enc->ArmorDrops)
-                    { if (A && !Roster->OwnsArmor(A)) { Roster->AddOwnedArmor(A); ++DroppedItems; } }
+                    { if (A && !Roster->OwnsArmor(A)) { Roster->AddOwnedArmor(A); LootNames.Add(A->DisplayName.ToString()); } }
                 };
                 AwardDrops(ActiveEncounter);
                 for (const TObjectPtr<AEnemyEncounter>& M : MergedEncounters) { AwardDrops(M); }
+            }
+        }
 
-                FString Msg = FString::Printf(TEXT("Loot:  +%d Gold   +%d %s"),
-                    NumEnemies * GoldPerEnemy, NumEnemies * MaterialPerEnemy,
-                    DefaultDropMaterial ? TEXT("Material") : TEXT(""));
-                if (DroppedItems > 0) { Msg += TEXT("   + new gear!"); }
-                ShowToast(Msg, FColor::Yellow);
+        // ── Build the victory-screen data. XP is granted equally across the
+        //    party in the BattleManager; recompute that same value from the
+        //    slain enemies (still alive here) so the bar can replay the fill
+        //    from each member's pre-fight level + XP. ─────────────────────────
+        {
+            int32 TotalXP = 0;
+            for (const TObjectPtr<ACombatantBase>& E : SpawnedEnemies)
+            {
+                if (const AEnemyCombatant* En = Cast<AEnemyCombatant>(E.Get()))
+                { TotalXP += FMath::Max(0, En->XPReward); }
+            }
+            const int32 PerMember = TotalXP / FMath::Max(1, PlayerParty.Num());
+
+            for (int32 i = 0; i < PlayerParty.Num(); ++i)
+            {
+                APlayerCombatant* P = Cast<APlayerCombatant>(PlayerParty[i]);
+                if (!P) { continue; }
+
+                FVictoryMemberXP Row;
+                Row.Name       = P->DisplayName.IsEmpty()
+                    ? FText::FromString(P->GetName()) : P->DisplayName;
+                Row.StartLevel = PreLevels.IsValidIndex(i) ? PreLevels[i] : P->Level;
+                Row.StartXP    = PreXP.IsValidIndex(i) ? PreXP[i] : 0;
+                Row.XPGained   = PerMember;
+
+                // Thresholds for each level the bar might roll through, ending
+                // on the in-progress level (so the last entry is the bar's cap).
+                int32 Remaining = Row.StartXP + Row.XPGained;
+                int32 L = Row.StartLevel;
+                do
+                {
+                    const int32 Thr = APlayerCombatant::XPRequiredForLevel(L);
+                    Row.Thresholds.Add(Thr);
+                    Remaining -= Thr;
+                    ++L;
+                } while (Remaining >= 0 && Row.Thresholds.Num() < 50);
+
+                VictoryMembers.Add(MoveTemp(Row));
+            }
+
+            SpoilLines.Add(FString::Printf(TEXT("Gold:  +%d"), GoldGained));
+            if (MaterialGained > 0)
+            {
+                SpoilLines.Add(FString::Printf(TEXT("%s:  +%d"),
+                    DefaultDropMaterial ? *DefaultDropMaterial->DisplayName.ToString() : TEXT("Material"),
+                    MaterialGained));
+            }
+            if (LootNames.Num() > 0)
+            {
+                SpoilLines.Add(FString::Printf(TEXT("Loot:  %s"), *FString::Join(LootNames, TEXT(", "))));
             }
         }
 
@@ -441,7 +506,11 @@ void AJrpgGameMode::HandleBattleEnded(bool bVictory)
             }
         }
 
-        WorldMode = EWorldMode::Exploring;
+        // Keep WorldMode == InCombat while the results panel is up: the world
+        // still ticks (so the XP bar animates), but encounters can't start a
+        // new fight (BeginEncounter guards on InCombat). Continue flips it back
+        // to Exploring. The panel sets UI-only input so the pawn can't move.
+        ShowVictoryScreen(VictoryMembers, SpoilLines);
     }
     else
     {
@@ -513,6 +582,45 @@ void AJrpgGameMode::DismissDefeatScreen()
         DefeatWidget->RemoveFromParent();
         DefeatWidget = nullptr;
     }
+    if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
+    {
+        PC->bShowMouseCursor = false;
+        PC->SetInputMode(FInputModeGameOnly());
+    }
+}
+
+void AJrpgGameMode::ShowVictoryScreen(const TArray<FVictoryMemberXP>& Members,
+                                     const TArray<FString>& SpoilLines)
+{
+    APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0);
+    if (!PC) { return; }
+
+    UClass* WidgetClass = VictoryWidgetClass ? VictoryWidgetClass.Get() : UVictoryScreenWidget::StaticClass();
+    VictoryWidget = CreateWidget<UVictoryScreenWidget>(PC, WidgetClass);
+    if (!VictoryWidget) { ContinueAfterVictory(); return; }
+
+    VictoryWidget->Members    = Members;
+    VictoryWidget->SpoilLines = SpoilLines;
+    VictoryWidget->OnContinueRequested = [this]() { ContinueAfterVictory(); };
+    VictoryWidget->AddToViewport(100);
+
+    PC->bShowMouseCursor = true;
+    FInputModeUIOnly Mode;
+    Mode.SetWidgetToFocus(VictoryWidget->TakeWidget());
+    PC->SetInputMode(Mode);
+}
+
+void AJrpgGameMode::ContinueAfterVictory()
+{
+    if (VictoryWidget)
+    {
+        VictoryWidget->RemoveFromParent();
+        VictoryWidget = nullptr;
+    }
+
+    // Now hand control back to exploration.
+    WorldMode = EWorldMode::Exploring;
+
     if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
     {
         PC->bShowMouseCursor = false;

@@ -70,7 +70,12 @@ APlayerCombatant::APlayerCombatant()
 
 int32 APlayerCombatant::GetXPForNextLevel() const
 {
-    return 100 + 50 * (Level - 1);
+    return XPRequiredForLevel(Level);
+}
+
+int32 APlayerCombatant::XPRequiredForLevel(int32 ForLevel)
+{
+    return 100 + 50 * (FMath::Max(1, ForLevel) - 1);
 }
 
 void APlayerCombatant::GrantXP(int32 Amount)

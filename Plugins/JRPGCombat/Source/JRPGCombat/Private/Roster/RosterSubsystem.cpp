@@ -52,6 +52,10 @@ void URosterSubsystem::SeedFromParty(const TArray<ACombatantBase*>& Party)
         Rec.Armor          = PC->Armor;
         Rec.Chips          = PC->Chips;
         Rec.EquippedSkillCount = PC->GetEquippedSkillCount();
+        Rec.UnlockedNodes  = PC->GetUnlockedNodes();
+        Rec.EquippedNodes  = PC->GetEquippedNodes();
+        Rec.SkillCoins     = PC->SkillCoins;
+        Rec.StatCoins      = PC->StatCoins;
         Rec.Assignment     = (PartyCount < MaxPartySize) ? EPartyAssignment::Party1
                                                          : EPartyAssignment::Bench;
         ++PartyCount;
@@ -142,6 +146,12 @@ void URosterSubsystem::ApplyRecordToActor(int32 Index, APlayerCombatant* Actor)
     Actor->CurrentXP = Rec.CurrentXP;
     if (Rec.BaseStats.MaxHP > 0.f) { Actor->BaseStats = Rec.BaseStats; }
 
+    // Skill-tree + currency state (edited at checkpoints, carried across levels).
+    Actor->SetUnlockedNodes(Rec.UnlockedNodes);
+    Actor->SetEquippedNodes(Rec.EquippedNodes);
+    Actor->SkillCoins = Rec.SkillCoins;
+    Actor->StatCoins  = Rec.StatCoins;
+
     // Re-derive the buffed stats (InitializeForBattle re-applies equipment
     // bonuses; it's HP-persistent so current HP is preserved).
     Actor->InitializeForBattle();
@@ -220,6 +230,10 @@ void URosterSubsystem::SetMemberArmorChip(int32 Index, UCharacterChipDataAsset* 
 
 void URosterSubsystem::SaveHPFromParty(const TArray<ACombatantBase*>& Party)
 {
+    // During a load transition the records already hold the loaded state; the
+    // outgoing level's EndPlay must NOT capture the old live actors over them.
+    if (bJustLoaded) { return; }
+
     for (ACombatantBase* Base : Party)
     {
         const int32 Idx = FindRecordForActor(Base);
@@ -228,12 +242,16 @@ void URosterSubsystem::SaveHPFromParty(const TArray<ACombatantBase*>& Party)
         Members[Idx].CurrentHP = Base->GetCurrentHP();
         Members[Idx].MaxHP     = Base->GetMaxHP();
 
-        // Keep level / XP / leveled base stats current for persistence.
+        // Keep level / XP / leveled base stats / skills current for persistence.
         if (const APlayerCombatant* PC = Cast<APlayerCombatant>(Base))
         {
-            Members[Idx].Level     = PC->Level;
-            Members[Idx].CurrentXP = PC->CurrentXP;
-            Members[Idx].BaseStats = PC->BaseStats;
+            Members[Idx].Level         = PC->Level;
+            Members[Idx].CurrentXP     = PC->CurrentXP;
+            Members[Idx].BaseStats     = PC->BaseStats;
+            Members[Idx].UnlockedNodes = PC->GetUnlockedNodes();
+            Members[Idx].EquippedNodes = PC->GetEquippedNodes();
+            Members[Idx].SkillCoins    = PC->SkillCoins;
+            Members[Idx].StatCoins     = PC->StatCoins;
         }
     }
 }
@@ -447,11 +465,15 @@ void URosterSubsystem::SyncFromLiveActors()
     {
         if (const APlayerCombatant* PC = FindLiveActor(Rec))
         {
-            Rec.CurrentHP = PC->GetCurrentHP();
-            Rec.MaxHP     = PC->GetMaxHP();
-            Rec.Level     = PC->Level;
-            Rec.CurrentXP = PC->CurrentXP;
-            Rec.BaseStats = PC->BaseStats;
+            Rec.CurrentHP     = PC->GetCurrentHP();
+            Rec.MaxHP         = PC->GetMaxHP();
+            Rec.Level         = PC->Level;
+            Rec.CurrentXP     = PC->CurrentXP;
+            Rec.BaseStats     = PC->BaseStats;
+            Rec.UnlockedNodes = PC->GetUnlockedNodes();
+            Rec.EquippedNodes = PC->GetEquippedNodes();
+            Rec.SkillCoins    = PC->SkillCoins;
+            Rec.StatCoins     = PC->StatCoins;
         }
     }
 }
@@ -474,6 +496,10 @@ void URosterSubsystem::CaptureToSave(UJrpgSaveGame& Save)
         M.Gun            = Rec.Gun;
         M.Armor          = Rec.Armor;
         M.Chips          = Rec.Chips;
+        M.UnlockedNodes  = Rec.UnlockedNodes;
+        M.EquippedNodes  = Rec.EquippedNodes;
+        M.SkillCoins     = Rec.SkillCoins;
+        M.StatCoins      = Rec.StatCoins;
         Save.Members.Add(MoveTemp(M));
     }
 
@@ -580,6 +606,10 @@ void URosterSubsystem::ApplyFromSave(const UJrpgSaveGame& Save)
         Rec.Gun               = M.Gun;
         Rec.Armor             = M.Armor;
         Rec.Chips             = M.Chips;
+        Rec.UnlockedNodes     = M.UnlockedNodes;
+        Rec.EquippedNodes     = M.EquippedNodes;
+        Rec.SkillCoins        = M.SkillCoins;
+        Rec.StatCoins         = M.StatCoins;
 
         // Name / tagline come from the character class default (not serialised).
         if (M.CharacterClass)

@@ -71,6 +71,12 @@ struct FPartyMemberSave
     UPROPERTY(SaveGame) TObjectPtr<UCharacterWeaponDataAsset> Gun        = nullptr;
     UPROPERTY(SaveGame) TObjectPtr<UCharacterArmorDataAsset>  Armor      = nullptr;
     UPROPERTY(SaveGame) TArray<TObjectPtr<UCharacterChipDataAsset>> Chips;
+
+    // Skill tree + currency.
+    UPROPERTY(SaveGame) TSet<FName> UnlockedNodes;
+    UPROPERTY(SaveGame) TArray<FName> EquippedNodes;
+    UPROPERTY(SaveGame) int32 SkillCoins = 0;
+    UPROPERTY(SaveGame) int32 StatCoins  = 0;
 };
 
 USTRUCT()

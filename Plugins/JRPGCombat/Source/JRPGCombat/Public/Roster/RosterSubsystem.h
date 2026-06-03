@@ -85,6 +85,19 @@ struct FPartyMemberRecord
     UPROPERTY()
     int32 EquippedSkillCount = 0;
 
+    // Skill-tree + currency state (persisted; edited at checkpoints incl. camp).
+    UPROPERTY()
+    TSet<FName> UnlockedNodes;
+
+    UPROPERTY()
+    TArray<FName> EquippedNodes;
+
+    UPROPERTY()
+    int32 SkillCoins = 0;
+
+    UPROPERTY()
+    int32 StatCoins = 0;
+
     UPROPERTY()
     EPartyAssignment Assignment = EPartyAssignment::Bench;
 

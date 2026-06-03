@@ -223,6 +223,12 @@ public:
     /** Ability classes for the currently equipped skills (combat menu source). */
     void GetEquippedAbilityClasses(TArray<TSubclassOf<UCombatAbility>>& Out) const;
 
+    // Persistence round-trip for skill state (used by the roster records / save).
+    const TSet<FName>&   GetUnlockedNodes() const { return UnlockedNodes; }
+    void SetUnlockedNodes(const TSet<FName>& In)  { UnlockedNodes = In; }
+    const TArray<FName>& GetEquippedNodes() const { return EquippedNodes; }
+    void SetEquippedNodes(const TArray<FName>& In) { EquippedNodes = In; }
+
 protected:
 
     virtual void BeginPlay() override;

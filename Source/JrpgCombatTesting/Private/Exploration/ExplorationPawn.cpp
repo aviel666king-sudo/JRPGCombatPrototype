@@ -24,6 +24,7 @@
 #include "UI/SkillTreeWidget.h"
 #include "UI/FastTravelWidget.h"
 #include "UI/RosterWidget.h"
+#include "UI/SaveIndicatorWidget.h"
 #include "Persistence/SaveSubsystem.h"
 #include "Travel/JrpgTravelSubsystem.h"
 #include "Engine/GameInstance.h"
@@ -133,7 +134,19 @@ void AExplorationPawn::HandleAutosave()
     {
         if (USaveSubsystem* SaveSys = GI->GetSubsystem<USaveSubsystem>())
         {
-            SaveSys->SaveToActiveSlot();
+            if (SaveSys->SaveToActiveSlot())
+            {
+                // Subtle bottom-left "Autosaving…" toast.
+                if (APlayerController* PC = Cast<APlayerController>(GetController()))
+                {
+                    if (USaveIndicatorWidget* W = CreateWidget<USaveIndicatorWidget>(
+                            PC, USaveIndicatorWidget::StaticClass()))
+                    {
+                        W->Message = FText::FromString(TEXT("Autosaving…"));
+                        W->AddToViewport(1);
+                    }
+                }
+            }
         }
     }
 }
@@ -301,9 +314,10 @@ void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
     }
 
     // Dev test hooks for save/load (replaced by the slot menu in Phase 3c).
+    // F6 save / F9 load — F5 collides with an engine viewport command.
     if (PlayerInputComponent)
     {
-        PlayerInputComponent->BindKey(EKeys::F5, IE_Pressed, this, &AExplorationPawn::HandleQuickSave);
+        PlayerInputComponent->BindKey(EKeys::F6, IE_Pressed, this, &AExplorationPawn::HandleQuickSave);
         PlayerInputComponent->BindKey(EKeys::F9, IE_Pressed, this, &AExplorationPawn::HandleQuickLoad);
     }
 

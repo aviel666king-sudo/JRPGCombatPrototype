@@ -234,6 +234,12 @@ protected:
     UPROPERTY()
     TObjectPtr<class UVictoryScreenWidget> VictoryWidget;
 
+    /** In the Camp (a hub with no placed party), spawn the party from the
+     *  persistent records as hidden actors and register them — so the live-actor
+     *  UI (skill tree, stat shop, roster) works there. No-op elsewhere / if a
+     *  party is already placed. Deferred one tick from BeginPlay. */
+    void SpawnPartyFromRecordsIfNeeded();
+
     /** Build + show the defeat screen with Retry / Give Up. */
     void ShowDefeatScreen();
 

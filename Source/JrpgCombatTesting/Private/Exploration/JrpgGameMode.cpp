@@ -31,6 +31,18 @@
 // Defined further down — forward-declared so HandleBattleEnded can use it.
 static void ShowToast(const FString& Msg, FColor Color, float Duration = 2.5f);
 
+namespace
+{
+    /** Canonical short level name (strips PIE prefix + path). */
+    FName CanonicalLevelName(const UWorld* World)
+    {
+        if (!World) { return NAME_None; }
+        FString MapName = World->GetMapName();
+        MapName.RemoveFromStart(World->StreamingLevelsPrefix);
+        return FName(*FPaths::GetBaseFilename(MapName));
+    }
+}
+
 AJrpgGameMode::AJrpgGameMode()
 {
     // Default to the exploration pawn. Blueprint subclasses can override this
@@ -75,6 +87,51 @@ void AJrpgGameMode::BeginPlay()
 
     UE_LOG(LogTemp, Log, TEXT("[JrpgGameMode] BeginPlay. WorldMode = Exploring. Hid %d level combatants."),
         HiddenCount);
+
+    // Camp/hub has no placed party — spawn it from records next tick (after the
+    // level BP has had a chance to call SetPlayerParty in combat levels).
+    GetWorldTimerManager().SetTimerForNextTick(this, &AJrpgGameMode::SpawnPartyFromRecordsIfNeeded);
+}
+
+void AJrpgGameMode::SpawnPartyFromRecordsIfNeeded()
+{
+    if (PlayerParty.Num() > 0) { return; }   // a level placed its own party
+
+    UGameInstance* GI = GetGameInstance();
+    URosterSubsystem* Roster = GI ? GI->GetSubsystem<URosterSubsystem>() : nullptr;
+    UJrpgTravelSubsystem* Travel = GI ? GI->GetSubsystem<UJrpgTravelSubsystem>() : nullptr;
+    UWorld* World = GetWorld();
+    if (!Roster || !Roster->IsSeeded() || !Travel || !World) { return; }
+
+    // Only in the camp hub — combat levels place their own party.
+    if (CanonicalLevelName(World) != Travel->CampLevelName) { return; }
+
+    FVector SpawnLoc = CachedExplorationPawn ? CachedExplorationPawn->GetActorLocation()
+                                             : FVector::ZeroVector;
+
+    TArray<ACombatantBase*> Spawned;
+    for (int32 i = 0; i < Roster->GetMemberCount(); ++i)
+    {
+        const FPartyMemberRecord& Rec = Roster->GetMember(i);
+        if (!Rec.CharacterClass) { continue; }
+
+        FActorSpawnParameters Params;
+        Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+        if (APlayerCombatant* PC = World->SpawnActor<APlayerCombatant>(
+                Rec.CharacterClass, SpawnLoc, FRotator::ZeroRotator, Params))
+        {
+            PC->SetActorHiddenInGame(true);
+            PC->SetActorEnableCollision(false);
+            Spawned.Add(PC);
+        }
+    }
+
+    if (Spawned.Num() > 0)
+    {
+        SetPlayerParty(Spawned);   // seeds (no-op) + restores records (incl skills)
+        UE_LOG(LogTemp, Log, TEXT("[JrpgGameMode] Camp: spawned %d party members from records."),
+            Spawned.Num());
+    }
 }
 
 void AJrpgGameMode::BeginEncounter(AEnemyEncounter* Encounter, bool bPlayerHasInitiative)
@@ -559,18 +616,6 @@ void AJrpgGameMode::RespawnDefeatedEncounters()
 // -----------------------------------------------------------------------------
 //  Defeat flow — Retry / Give Up
 // -----------------------------------------------------------------------------
-
-namespace
-{
-    /** Canonical short level name (strips PIE prefix + path). */
-    FName CanonicalLevelName(const UWorld* World)
-    {
-        if (!World) { return NAME_None; }
-        FString MapName = World->GetMapName();
-        MapName.RemoveFromStart(World->StreamingLevelsPrefix);
-        return FName(*FPaths::GetBaseFilename(MapName));
-    }
-}
 
 void AJrpgGameMode::ShowDefeatScreen()
 {

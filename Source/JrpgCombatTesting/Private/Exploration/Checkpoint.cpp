@@ -214,7 +214,10 @@ void ACheckpoint::Rest(APawn* Resting)
         // Resting is the in-level save point.
         if (USaveSubsystem* SaveSys = GI->GetSubsystem<USaveSubsystem>())
         {
-            SaveSys->SaveToActiveSlot();
+            if (SaveSys->SaveToActiveSlot() && GEngine)
+            {
+                GEngine->AddOnScreenDebugMessage(-1, 3.f, FColor::Cyan, TEXT("Progress saved"));
+            }
         }
     }
 

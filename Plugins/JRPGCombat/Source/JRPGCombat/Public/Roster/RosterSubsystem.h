@@ -48,6 +48,9 @@ struct FPartyMemberRecord
     int32 Level = 1;
 
     UPROPERTY()
+    int32 CurrentXP = 0;
+
+    UPROPERTY()
     float CurrentHP = 0.f;
 
     UPROPERTY()
@@ -61,6 +64,11 @@ struct FPartyMemberRecord
 
     UPROPERTY()
     float Speed = 0.f;
+
+    /** Leveled base stats (pre-equipment) — persisted so a reloaded character
+     *  keeps the stat growth they earned from leveling. */
+    UPROPERTY()
+    FCombatStats BaseStats;
 
     UPROPERTY()
     TObjectPtr<UCharacterWeaponDataAsset> MainWeapon;
@@ -247,6 +255,19 @@ public:
 
     void SetLastRestedCheckpoint(FName LevelName, FName CheckpointId, const FTransform& Where);
     bool  HasLastRested() const { return bHasLastRested; }
+
+    // -------------------------------------------------------------------------
+    //  Disk save round-trip. CaptureToSave reads the current persistent state
+    //  into the save object; ApplyFromSave rebuilds it (and marks seeded), then
+    //  full-heals + restocks charges (load = fresh and ready).
+    // -------------------------------------------------------------------------
+
+    void CaptureToSave(class UJrpgSaveGame& Save);
+    void ApplyFromSave(const class UJrpgSaveGame& Save);
+
+    /** Pull current HP / level / XP / base stats from any live party actors into
+     *  the records (call right before a save so it reflects the live state). */
+    void SyncFromLiveActors();
     FName GetLastRestedLevel() const { return LastRestedLevel; }
     FName GetLastRestedCheckpointId() const { return LastRestedCheckpointId; }
     FTransform GetLastRestedTransform() const { return LastRestedTransform; }
@@ -257,6 +278,10 @@ private:
     TArray<FPartyMemberRecord> Members;
 
     bool bSeeded = false;
+
+    /** Set by ApplyFromSave; the next RestoreHPToParty full-heals every member
+     *  (load = arrive healed) and then clears it. */
+    bool bJustLoaded = false;
 
     int32 HealCharges = 0,   MaxHealCharges = 2;
     int32 ReviveCharges = 0, MaxReviveCharges = 1;

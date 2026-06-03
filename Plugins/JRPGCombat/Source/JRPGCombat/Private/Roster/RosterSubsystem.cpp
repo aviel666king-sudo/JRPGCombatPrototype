@@ -6,6 +6,7 @@
 #include "Equipment/CharacterChipDataAsset.h"
 
 #include "Equipment/CraftingMaterialDataAsset.h"
+#include "Persistence/JrpgSaveGame.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -39,6 +40,8 @@ void URosterSubsystem::SeedFromParty(const TArray<ACombatantBase*>& Party)
         Rec.DisplayName    = PC->DisplayName;
         Rec.Tagline        = PC->Tagline;
         Rec.Level          = PC->Level;
+        Rec.CurrentXP      = PC->CurrentXP;
+        Rec.BaseStats      = PC->BaseStats;
         Rec.MaxHP          = PC->GetMaxHP();
         Rec.CurrentHP      = PC->GetCurrentHP();
         Rec.Attack         = PC->GetStatValue(EUpgradeStat::Attack);
@@ -88,6 +91,17 @@ void URosterSubsystem::RestoreHPToParty(const TArray<ACombatantBase*>& Party)
             ApplyRecordToActor(Idx, PC);
         }
 
+        if (bJustLoaded)
+        {
+            // Loaded from disk → arrive at full HP (equipment MaxHP is known now
+            // that InitializeForBattle has run).
+            const float Missing = Base->GetMissingHP();
+            if (Missing > 0.f) { Base->RestoreResource(EResourceType::HP, Missing); }
+            Members[Idx].CurrentHP = Base->GetCurrentHP();
+            Members[Idx].MaxHP     = Base->GetMaxHP();
+            continue;
+        }
+
         const FPartyMemberRecord& Rec = Members[Idx];
         const float Live = Base->GetCurrentHP();
         const float Want = Rec.CurrentHP;
@@ -95,6 +109,8 @@ void URosterSubsystem::RestoreHPToParty(const TArray<ACombatantBase*>& Party)
         if (Want > Live)      { Base->RestoreResource(EResourceType::HP, Want - Live); }
         else if (Want < Live) { Base->SpendResource(EResourceType::HP, Live - Want); }
     }
+
+    bJustLoaded = false;   // consumed
 }
 
 APlayerCombatant* URosterSubsystem::FindLiveActor(const FPartyMemberRecord& Rec) const
@@ -118,6 +134,13 @@ void URosterSubsystem::ApplyRecordToActor(int32 Index, APlayerCombatant* Actor)
     Actor->Gun        = Rec.Gun;
     Actor->Armor      = Rec.Armor;
     Actor->Chips      = Rec.Chips;
+
+    // Restore progression. BaseStats carries the leveled growth, so a loaded
+    // character keeps the stats their level implies (only restore if the record
+    // actually has them — a freshly seeded record copies them from the actor).
+    Actor->Level     = Rec.Level;
+    Actor->CurrentXP = Rec.CurrentXP;
+    if (Rec.BaseStats.MaxHP > 0.f) { Actor->BaseStats = Rec.BaseStats; }
 
     // Re-derive the buffed stats (InitializeForBattle re-applies equipment
     // bonuses; it's HP-persistent so current HP is preserved).
@@ -204,6 +227,14 @@ void URosterSubsystem::SaveHPFromParty(const TArray<ACombatantBase*>& Party)
 
         Members[Idx].CurrentHP = Base->GetCurrentHP();
         Members[Idx].MaxHP     = Base->GetMaxHP();
+
+        // Keep level / XP / leveled base stats current for persistence.
+        if (const APlayerCombatant* PC = Cast<APlayerCombatant>(Base))
+        {
+            Members[Idx].Level     = PC->Level;
+            Members[Idx].CurrentXP = PC->CurrentXP;
+            Members[Idx].BaseStats = PC->BaseStats;
+        }
     }
 }
 
@@ -404,6 +435,171 @@ void URosterSubsystem::SetLastRestedCheckpoint(FName LevelName, FName Checkpoint
     LastRestedCheckpointId = CheckpointId;
     LastRestedTransform    = Where;
     bHasLastRested         = true;
+}
+
+// -----------------------------------------------------------------------------
+//  Disk save round-trip
+// -----------------------------------------------------------------------------
+
+void URosterSubsystem::SyncFromLiveActors()
+{
+    for (FPartyMemberRecord& Rec : Members)
+    {
+        if (const APlayerCombatant* PC = FindLiveActor(Rec))
+        {
+            Rec.CurrentHP = PC->GetCurrentHP();
+            Rec.MaxHP     = PC->GetMaxHP();
+            Rec.Level     = PC->Level;
+            Rec.CurrentXP = PC->CurrentXP;
+            Rec.BaseStats = PC->BaseStats;
+        }
+    }
+}
+
+void URosterSubsystem::CaptureToSave(UJrpgSaveGame& Save)
+{
+    Save.Members.Reset();
+    for (const FPartyMemberRecord& Rec : Members)
+    {
+        FPartyMemberSave M;
+        M.CharacterClass = Rec.CharacterClass;
+        M.Level          = Rec.Level;
+        M.CurrentXP      = Rec.CurrentXP;
+        M.Assignment     = static_cast<uint8>(Rec.Assignment);
+        M.BaseMaxHP      = Rec.BaseStats.MaxHP;
+        M.BaseAttack     = Rec.BaseStats.Attack;
+        M.BaseDefense    = Rec.BaseStats.Defense;
+        M.BaseSpeed      = Rec.BaseStats.Speed;
+        M.MainWeapon     = Rec.MainWeapon;
+        M.Gun            = Rec.Gun;
+        M.Armor          = Rec.Armor;
+        M.Chips          = Rec.Chips;
+        Save.Members.Add(MoveTemp(M));
+    }
+
+    Save.HealCharges   = HealCharges;
+    Save.ReviveCharges = ReviveCharges;
+    Save.APCharges     = APCharges;
+
+    Save.Gold            = Gold;
+    Save.PrimaryMaterial = PrimaryMaterial;
+    Save.Materials.Reset();
+    for (const TPair<TObjectPtr<UCraftingMaterialDataAsset>, int32>& P : Materials)
+    {
+        if (P.Key && P.Value > 0)
+        {
+            FMaterialSave MS; MS.Asset = P.Key; MS.Count = P.Value;
+            Save.Materials.Add(MS);
+        }
+    }
+
+    Save.OwnedWeapons.Reset();
+    for (const TObjectPtr<UCharacterWeaponDataAsset>& W : OwnedWeapons)
+    {
+        if (!W) { continue; }
+        FOwnedWeaponSave S; S.Asset = W; S.Tier = static_cast<uint8>(W->CurrentTier);
+        Save.OwnedWeapons.Add(S);
+    }
+    Save.OwnedChips.Reset();
+    for (const TObjectPtr<UCharacterChipDataAsset>& C : OwnedChips)
+    {
+        if (!C) { continue; }
+        FOwnedChipSave S; S.Asset = C; S.Level = C->CurrentLevel;
+        Save.OwnedChips.Add(S);
+    }
+    Save.OwnedArmors.Reset();
+    for (const TObjectPtr<UCharacterArmorDataAsset>& A : OwnedArmors)
+    {
+        if (!A) { continue; }
+        FOwnedArmorSave S; S.Asset = A; S.Level = A->CurrentLevel;
+        S.SocketedChip      = A->SocketedChip;
+        S.SocketedChipLevel = A->SocketedChip ? A->SocketedChip->CurrentLevel : 1;
+        Save.OwnedArmors.Add(S);
+    }
+
+    Save.bHasLastRested         = bHasLastRested;
+    Save.LastRestedLevel        = LastRestedLevel;
+    Save.LastRestedCheckpointId = LastRestedCheckpointId;
+    Save.LastRestedTransform    = LastRestedTransform;
+}
+
+void URosterSubsystem::ApplyFromSave(const UJrpgSaveGame& Save)
+{
+    // Owned inventory first — re-applies the upgrade levels onto the shared
+    // (just-reloaded, authored-default) data assets.
+    OwnedWeapons.Reset();
+    for (const FOwnedWeaponSave& S : Save.OwnedWeapons)
+    {
+        if (!S.Asset) { continue; }
+        S.Asset->CurrentTier = static_cast<EWeaponTier>(S.Tier);
+        OwnedWeapons.AddUnique(S.Asset);
+    }
+    OwnedChips.Reset();
+    for (const FOwnedChipSave& S : Save.OwnedChips)
+    {
+        if (!S.Asset) { continue; }
+        S.Asset->CurrentLevel = S.Level;
+        OwnedChips.AddUnique(S.Asset);
+    }
+    OwnedArmors.Reset();
+    for (const FOwnedArmorSave& S : Save.OwnedArmors)
+    {
+        if (!S.Asset) { continue; }
+        S.Asset->CurrentLevel = S.Level;
+        S.Asset->SocketedChip = S.SocketedChip;
+        if (S.SocketedChip) { S.SocketedChip->CurrentLevel = S.SocketedChipLevel; }
+        OwnedArmors.AddUnique(S.Asset);
+    }
+
+    Gold            = Save.Gold;
+    PrimaryMaterial = Save.PrimaryMaterial;
+    Materials.Reset();
+    for (const FMaterialSave& MS : Save.Materials)
+    {
+        if (MS.Asset) { Materials.Add(MS.Asset, MS.Count); }
+    }
+
+    // Load = restock charges to max.
+    HealCharges   = MaxHealCharges;
+    ReviveCharges = MaxReviveCharges;
+    APCharges     = MaxAPCharges;
+
+    Members.Reset();
+    for (const FPartyMemberSave& M : Save.Members)
+    {
+        FPartyMemberRecord Rec;
+        Rec.CharacterClass    = M.CharacterClass;
+        Rec.Level             = M.Level;
+        Rec.CurrentXP         = M.CurrentXP;
+        Rec.Assignment        = static_cast<EPartyAssignment>(M.Assignment);
+        Rec.BaseStats.MaxHP   = M.BaseMaxHP;
+        Rec.BaseStats.Attack  = M.BaseAttack;
+        Rec.BaseStats.Defense = M.BaseDefense;
+        Rec.BaseStats.Speed   = M.BaseSpeed;
+        Rec.MainWeapon        = M.MainWeapon;
+        Rec.Gun               = M.Gun;
+        Rec.Armor             = M.Armor;
+        Rec.Chips             = M.Chips;
+
+        // Name / tagline come from the character class default (not serialised).
+        if (M.CharacterClass)
+        {
+            if (const APlayerCombatant* CDO = M.CharacterClass->GetDefaultObject<APlayerCombatant>())
+            {
+                Rec.DisplayName = CDO->DisplayName;
+                Rec.Tagline     = CDO->Tagline;
+            }
+        }
+
+        // Placeholder HP until the level loads and InitializeForBattle gives us
+        // the real (equipment-inclusive) max; bJustLoaded then full-heals.
+        Rec.MaxHP     = FMath::Max(1.f, M.BaseMaxHP);
+        Rec.CurrentHP = Rec.MaxHP;
+        Members.Add(MoveTemp(Rec));
+    }
+
+    bSeeded     = Members.Num() > 0;
+    bJustLoaded = true;
 }
 
 void URosterSubsystem::GetAvailableWeapons(UClass* CharacterClass, bool bGun,

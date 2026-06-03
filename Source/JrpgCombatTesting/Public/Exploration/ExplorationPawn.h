@@ -291,6 +291,14 @@ protected:
     /** U — at the CAMP checkpoint only, open the roster in upgrade mode. */
     void HandleUpgradeAtCamp();
 
+    /** Open-world autosave tick (started in BeginPlay only in the OW level). */
+    void HandleAutosave();
+    FTimerHandle AutosaveTimer;
+
+    /** Dev test hooks: F5 quick-save, F9 quick-load the active slot. */
+    void HandleQuickSave();
+    void HandleQuickLoad();
+
     /** Toggle the stat shop. Opens only when a checkpoint is in range. */
     void HandleToggleShop();
     void OpenStatShop();

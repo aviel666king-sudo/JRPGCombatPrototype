@@ -9,6 +9,7 @@
 #include "Components/ProtocolManagerComponent.h"
 #include "Travel/VisitedCheckpointRegistry.h"
 #include "Roster/RosterSubsystem.h"
+#include "Persistence/SaveSubsystem.h"
 #include "Engine/GameInstance.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
@@ -208,6 +209,12 @@ void ACheckpoint::Rest(APawn* Resting)
         {
             Roster->SetLastRestedCheckpoint(
                 GetCanonicalLevelName(World), GetCheckpointId(), GetActorTransform());
+        }
+
+        // Resting is the in-level save point.
+        if (USaveSubsystem* SaveSys = GI->GetSubsystem<USaveSubsystem>())
+        {
+            SaveSys->SaveToActiveSlot();
         }
     }
 

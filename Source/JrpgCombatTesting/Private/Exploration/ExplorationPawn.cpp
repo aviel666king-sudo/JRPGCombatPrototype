@@ -24,6 +24,11 @@
 #include "UI/SkillTreeWidget.h"
 #include "UI/FastTravelWidget.h"
 #include "UI/RosterWidget.h"
+#include "Persistence/SaveSubsystem.h"
+#include "Travel/JrpgTravelSubsystem.h"
+#include "Engine/GameInstance.h"
+#include "Misc/Paths.h"
+#include "TimerManager.h"
 #include "Exploration/LootPickup.h"
 #include "Travel/JrpgTravelSubsystem.h"
 #include "Travel/WorldPortal.h"
@@ -94,6 +99,65 @@ void AExplorationPawn::BeginPlay()
             {
                 Subsystem->AddMappingContext(ExplorationMappingContext, 0);
             }
+        }
+    }
+
+    // Open-world autosave: every 15s while wandering the OW. Levels and camp
+    // only save at checkpoints, so we don't start the timer there.
+    if (UWorld* World = GetWorld())
+    {
+        FString MapName = World->GetMapName();
+        MapName.RemoveFromStart(World->StreamingLevelsPrefix);
+        const FName Level = FName(*FPaths::GetBaseFilename(MapName));
+
+        FName OWName(TEXT("L_Overworld"));
+        if (UGameInstance* GI = GetGameInstance())
+        {
+            if (UJrpgTravelSubsystem* Travel = GI->GetSubsystem<UJrpgTravelSubsystem>())
+            {
+                OWName = Travel->OpenWorldLevelName;
+            }
+        }
+        if (Level == OWName)
+        {
+            World->GetTimerManager().SetTimer(
+                AutosaveTimer, this, &AExplorationPawn::HandleAutosave, 15.f, true);
+        }
+    }
+}
+
+void AExplorationPawn::HandleAutosave()
+{
+    if (bRosterOpen || bShopOpen || bSkillTreeOpen || bFastTravelOpen) { return; }
+    if (UGameInstance* GI = GetGameInstance())
+    {
+        if (USaveSubsystem* SaveSys = GI->GetSubsystem<USaveSubsystem>())
+        {
+            SaveSys->SaveToActiveSlot();
+        }
+    }
+}
+
+void AExplorationPawn::HandleQuickSave()
+{
+    if (UGameInstance* GI = GetGameInstance())
+    {
+        if (USaveSubsystem* SaveSys = GI->GetSubsystem<USaveSubsystem>())
+        {
+            const bool bOk = SaveSys->SaveToActiveSlot();
+            if (GEngine) { GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Green,
+                bOk ? TEXT("Saved") : TEXT("Save failed")); }
+        }
+    }
+}
+
+void AExplorationPawn::HandleQuickLoad()
+{
+    if (UGameInstance* GI = GetGameInstance())
+    {
+        if (USaveSubsystem* SaveSys = GI->GetSubsystem<USaveSubsystem>())
+        {
+            SaveSys->LoadFromSlot(SaveSys->ActiveSlot);
         }
     }
 }
@@ -234,6 +298,13 @@ void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
     {
         PlayerInputComponent->BindKey(EKeys::E, IE_Pressed, this, &AExplorationPawn::HandleInteract);
         UE_LOG(LogTemp, Warning, TEXT("[ExplorationPawn] Interact bound to E key via direct fallback (no IA_Interact assigned)"));
+    }
+
+    // Dev test hooks for save/load (replaced by the slot menu in Phase 3c).
+    if (PlayerInputComponent)
+    {
+        PlayerInputComponent->BindKey(EKeys::F5, IE_Pressed, this, &AExplorationPawn::HandleQuickSave);
+        PlayerInputComponent->BindKey(EKeys::F9, IE_Pressed, this, &AExplorationPawn::HandleQuickLoad);
     }
 
     // H-key fallback for healing protocol use.

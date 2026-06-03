@@ -46,6 +46,10 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Travel|Checkpoints")
     void ClearAll();
 
+    // Save/load round-trip.
+    const TMap<FName, TArray<FName>>& GetAllVisited() const { return Visited; }
+    void SetAllVisited(const TMap<FName, TArray<FName>>& In) { Visited = In; }
+
 private:
 
     /** LevelName -> ordered list of visited checkpoint ids. TArray (not TSet)

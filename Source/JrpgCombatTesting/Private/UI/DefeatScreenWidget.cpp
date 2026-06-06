@@ -10,7 +10,9 @@
 #include "Components/VerticalBoxSlot.h"
 #include "Styling/CoreStyle.h"
 
-namespace
+namespace DefeatUI {}
+using namespace DefeatUI;
+namespace DefeatUI
 {
     const FLinearColor ColScreenBG(0.02f, 0.0f, 0.0f, 0.92f);
     const FLinearColor ColTitle   (0.85f, 0.20f, 0.20f, 1.0f);

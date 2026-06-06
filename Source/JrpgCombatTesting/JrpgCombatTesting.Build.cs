@@ -7,7 +7,12 @@ public class JrpgCombatTesting : ModuleRules
 	public JrpgCombatTesting(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
-	
+
+		// Each UI .cpp keeps its own anonymous-namespace helpers (ColText, Font,
+		// etc.); unity bundling would merge them into one TU and collide. Keep
+		// this module non-unity so those stay file-local.
+		bUseUnity = false;
+
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "UMG", "NavigationSystem", "JRPGCombat" });
 
 		PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });

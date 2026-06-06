@@ -211,14 +211,9 @@ void ACheckpoint::Rest(APawn* Resting)
                 GetCanonicalLevelName(World), GetCheckpointId(), GetActorTransform());
         }
 
-        // Resting is the in-level save point.
-        if (USaveSubsystem* SaveSys = GI->GetSubsystem<USaveSubsystem>())
-        {
-            if (SaveSys->SaveToActiveSlot() && GEngine)
-            {
-                GEngine->AddOnScreenDebugMessage(-1, 3.f, FColor::Cyan, TEXT("Progress saved"));
-            }
-        }
+        // NOTE: resting no longer writes to disk — it heals + sets the respawn
+        // anchor + respawns enemies. Saving is the explicit checkpoint Save
+        // button (slot picker). The Open World still autosaves the active slot.
     }
 
     UE_LOG(LogTemp, Log, TEXT("[Checkpoint] Rest complete"));

@@ -15,7 +15,9 @@
 #include "Exploration/JrpgGameMode.h"
 #include "Kismet/GameplayStatics.h"
 
-namespace
+namespace SkillTreeUI {}
+using namespace SkillTreeUI;
+namespace SkillTreeUI
 {
     const FLinearColor Dimmer   (0.00f, 0.00f, 0.00f, 0.74f);
     const FLinearColor CardBG   (0.05f, 0.06f, 0.09f, 0.98f);

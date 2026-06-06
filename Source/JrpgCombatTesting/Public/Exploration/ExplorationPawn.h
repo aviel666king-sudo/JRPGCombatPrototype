@@ -291,6 +291,13 @@ protected:
     /** U — at the CAMP checkpoint only, open the roster in upgrade mode. */
     void HandleUpgradeAtCamp();
 
+    /** M — at any checkpoint, open the Save / Manage menu (save slots + clear). */
+    void HandleToggleCheckpointMenu();
+    void OpenCheckpointMenu();
+    void CloseCheckpointMenu();
+    bool bCheckpointMenuOpen = false;
+    TObjectPtr<class UCheckpointSaveWidget> CheckpointMenuWidget;
+
     /** Open-world autosave tick (started in BeginPlay only in the OW level). */
     void HandleAutosave();
     FTimerHandle AutosaveTimer;

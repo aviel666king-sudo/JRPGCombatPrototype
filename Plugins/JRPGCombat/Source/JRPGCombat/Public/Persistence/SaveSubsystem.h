@@ -29,6 +29,15 @@ public:
     UPROPERTY(BlueprintReadWrite, Category = "Save")
     FString ActiveSlot = TEXT("Save_Auto");
 
+    /** Level a New Game starts in. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Save")
+    FName StartingLevel = TEXT("GroundZero");
+
+    /** Wipe persistent state, point the active slot at Slot, and open the
+     *  starting level fresh (main-menu "New Game"). */
+    UFUNCTION(BlueprintCallable, Category = "Save")
+    void StartNewGame(const FString& Slot);
+
     UFUNCTION(BlueprintCallable, Category = "Save")
     bool SaveToSlot(const FString& Slot);
 

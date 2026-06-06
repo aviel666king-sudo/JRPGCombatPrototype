@@ -91,6 +91,21 @@ void USaveSubsystem::ApplyFrom(UJrpgSaveGame* Save)
     }
 }
 
+void USaveSubsystem::StartNewGame(const FString& Slot)
+{
+    ActiveSlot = Slot;
+
+    if (UGameInstance* GI = GetGameInstance())
+    {
+        if (URosterSubsystem* R = GI->GetSubsystem<URosterSubsystem>())          { R->ResetForNewGame(); }
+        if (UWorldStateSubsystem* W = GI->GetSubsystem<UWorldStateSubsystem>())   { W->ClearAll(); }
+        if (UVisitedCheckpointRegistry* V = GI->GetSubsystem<UVisitedCheckpointRegistry>()) { V->ClearAll(); }
+    }
+
+    DeleteSlot(Slot);   // start the slot empty; first save/autosave writes it
+    UGameplayStatics::OpenLevel(this, StartingLevel);
+}
+
 bool USaveSubsystem::SaveToSlot(const FString& Slot)
 {
     if (Slot.IsEmpty()) { return false; }

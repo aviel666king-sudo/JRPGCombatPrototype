@@ -25,6 +25,7 @@
 #include "UI/FastTravelWidget.h"
 #include "UI/RosterWidget.h"
 #include "UI/SaveIndicatorWidget.h"
+#include "UI/CheckpointSaveWidget.h"
 #include "Persistence/SaveSubsystem.h"
 #include "Travel/JrpgTravelSubsystem.h"
 #include "Engine/GameInstance.h"
@@ -101,6 +102,12 @@ void AExplorationPawn::BeginPlay()
                 Subsystem->AddMappingContext(ExplorationMappingContext, 0);
             }
         }
+
+        // Claim game input on spawn. A prior main-menu / load transition can
+        // leave the viewport in UI-only mode, which otherwise blocks all
+        // exploration input until something (e.g. combat) resets it.
+        PC->SetInputMode(FInputModeGameOnly());
+        PC->bShowMouseCursor = false;
     }
 
     // Open-world autosave: every 15s while wandering the OW. Levels and camp
@@ -319,6 +326,8 @@ void AExplorationPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
     {
         PlayerInputComponent->BindKey(EKeys::F6, IE_Pressed, this, &AExplorationPawn::HandleQuickSave);
         PlayerInputComponent->BindKey(EKeys::F9, IE_Pressed, this, &AExplorationPawn::HandleQuickLoad);
+        // M — Save / Manage menu (slots + clear) at a checkpoint.
+        PlayerInputComponent->BindKey(EKeys::M, IE_Pressed, this, &AExplorationPawn::HandleToggleCheckpointMenu);
     }
 
     // H-key fallback for healing protocol use.
@@ -1038,6 +1047,72 @@ void AExplorationPawn::CloseRoster()
     bRosterOpen = false;
 
     UGameplayStatics::SetGamePaused(this, false);
+
+    if (APlayerController* PC = Cast<APlayerController>(GetController()))
+    {
+        PC->SetShowMouseCursor(false);
+        PC->SetInputMode(FInputModeGameOnly());
+    }
+}
+
+void AExplorationPawn::HandleToggleCheckpointMenu()
+{
+    if (bIsAssassinating || bIsCastingCone) { return; }
+    if (bCheckpointMenuOpen) { CloseCheckpointMenu(); }
+    else                     { OpenCheckpointMenu(); }
+}
+
+void AExplorationPawn::OpenCheckpointMenu()
+{
+    if (bCheckpointMenuOpen || bIsAssassinating || bIsCastingCone) { return; }
+
+    UWorld* World = GetWorld();
+    if (!World) { return; }
+
+    // Gate: only at a checkpoint (levels + camp have them; OW does not).
+    bool bAtCheckpoint = false;
+    for (TActorIterator<ACheckpoint> It(World); It; ++It)
+    {
+        if (*It && (*It)->IsPlayerInRange()) { bAtCheckpoint = true; break; }
+    }
+    if (!bAtCheckpoint)
+    {
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Yellow,
+                TEXT("Stand at a checkpoint to save / manage"));
+        }
+        return;
+    }
+
+    if (bShopOpen)      { CloseStatShop(); }
+    if (bSkillTreeOpen) { CloseSkillTree(); }
+    if (bRosterOpen)    { CloseRoster(); }
+
+    APlayerController* PC = Cast<APlayerController>(GetController());
+    if (!PC) { return; }
+
+    CheckpointMenuWidget = CreateWidget<UCheckpointSaveWidget>(PC, UCheckpointSaveWidget::StaticClass());
+    if (!CheckpointMenuWidget) { return; }
+
+    CheckpointMenuWidget->OnCloseRequested = [this]() { CloseCheckpointMenu(); };
+    CheckpointMenuWidget->AddToViewport(50);
+    bCheckpointMenuOpen = true;
+
+    PC->SetShowMouseCursor(true);
+    FInputModeUIOnly Mode;
+    Mode.SetWidgetToFocus(CheckpointMenuWidget->TakeWidget());
+    PC->SetInputMode(Mode);
+}
+
+void AExplorationPawn::CloseCheckpointMenu()
+{
+    if (CheckpointMenuWidget)
+    {
+        CheckpointMenuWidget->RemoveFromParent();
+        CheckpointMenuWidget = nullptr;
+    }
+    bCheckpointMenuOpen = false;
 
     if (APlayerController* PC = Cast<APlayerController>(GetController()))
     {

@@ -23,7 +23,9 @@
 #include "Exploration/JrpgGameMode.h"
 #include "Kismet/GameplayStatics.h"
 
-namespace
+namespace RosterUI {}
+using namespace RosterUI;
+namespace RosterUI
 {
     const FLinearColor ColScreenBG (0.015f, 0.025f, 0.045f, 0.96f);
     const FLinearColor ColCardBG   (0.05f,  0.08f,  0.13f,  1.0f);

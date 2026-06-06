@@ -278,6 +278,18 @@ public:
     void CaptureToSave(class UJrpgSaveGame& Save);
     void ApplyFromSave(const class UJrpgSaveGame& Save);
 
+    // -------------------------------------------------------------------------
+    //  New game / clear (checkpoint "clear" buttons + main-menu New Game).
+    // -------------------------------------------------------------------------
+
+    /** Wipe everything so the next level seeds a fresh party (New Game). */
+    void ResetForNewGame();
+
+    /** Reset every party member to class defaults (Lv1, base stats, starting
+     *  gear + skills, gear tiers/coins reset). If bKeepLootAndMoney is false,
+     *  also wipes owned inventory + gold + materials. */
+    void ClearCharactersToBase(bool bKeepLootAndMoney);
+
     /** Pull current HP / level / XP / base stats from any live party actors into
      *  the records (call right before a save so it reflects the live state). */
     void SyncFromLiveActors();

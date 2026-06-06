@@ -459,6 +459,85 @@ void URosterSubsystem::SetLastRestedCheckpoint(FName LevelName, FName Checkpoint
 //  Disk save round-trip
 // -----------------------------------------------------------------------------
 
+void URosterSubsystem::ResetForNewGame()
+{
+    Members.Reset();
+    OwnedWeapons.Reset();
+    OwnedArmors.Reset();
+    OwnedChips.Reset();
+    Materials.Reset();
+    Gold = 0;
+
+    HealCharges   = MaxHealCharges;
+    ReviveCharges = MaxReviveCharges;
+    APCharges     = MaxAPCharges;
+
+    bSeeded            = false;
+    bHasLastRested     = false;
+    bJustLoaded        = false;
+    bHasBattleSnapshot = false;
+}
+
+void URosterSubsystem::ClearCharactersToBase(bool bKeepLootAndMoney)
+{
+    for (FPartyMemberRecord& Rec : Members)
+    {
+        const APlayerCombatant* CDO = Rec.CharacterClass
+            ? Rec.CharacterClass->GetDefaultObject<APlayerCombatant>() : nullptr;
+        if (!CDO) { continue; }
+
+        Rec.Level      = 1;
+        Rec.CurrentXP  = 0;
+        Rec.BaseStats  = CDO->BaseStats;
+        Rec.SkillCoins = 0;
+        Rec.StatCoins  = 0;
+
+        TArray<FName> Starting;
+        CDO->GetStartingSkillNodesList(Starting);
+        Rec.UnlockedNodes = TSet<FName>(Starting);
+        Rec.EquippedNodes = Starting;
+
+        // Base gear (and reset upgrade levels on those default assets).
+        Rec.MainWeapon = CDO->MainWeapon;
+        Rec.Gun        = CDO->Gun;
+        Rec.Armor      = CDO->Armor;
+        Rec.Chips      = CDO->Chips;
+        if (Rec.MainWeapon) { Rec.MainWeapon->CurrentTier = EWeaponTier::D; }
+        if (Rec.Gun)        { Rec.Gun->CurrentTier        = EWeaponTier::D; }
+        if (Rec.Armor)      { Rec.Armor->CurrentLevel      = 1; }
+        for (const TObjectPtr<UCharacterChipDataAsset>& C : Rec.Chips)
+        { if (C) { C->CurrentLevel = 1; } }
+
+        Rec.MaxHP     = FMath::Max(1.f, Rec.BaseStats.MaxHP);
+        Rec.CurrentHP = Rec.MaxHP;
+    }
+
+    if (!bKeepLootAndMoney)
+    {
+        OwnedWeapons.Reset();
+        OwnedArmors.Reset();
+        OwnedChips.Reset();
+        Materials.Reset();
+        Gold = 0;
+    }
+
+    // Make sure the base gear is owned (switchable) either way.
+    for (const FPartyMemberRecord& Rec : Members)
+    {
+        AddOwnedWeapon(Rec.MainWeapon);
+        AddOwnedWeapon(Rec.Gun);
+        AddOwnedArmor(Rec.Armor);
+        for (const TObjectPtr<UCharacterChipDataAsset>& C : Rec.Chips)
+        { AddOwnedChip(C); }
+    }
+
+    HealCharges   = MaxHealCharges;
+    ReviveCharges = MaxReviveCharges;
+    APCharges     = MaxAPCharges;
+
+    RefreshAllMembers();   // push the reset onto any live actors
+}
+
 void URosterSubsystem::SyncFromLiveActors()
 {
     for (FPartyMemberRecord& Rec : Members)

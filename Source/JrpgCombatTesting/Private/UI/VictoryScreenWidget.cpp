@@ -15,7 +15,9 @@
 #include "Styling/CoreStyle.h"
 #include "TimerManager.h"
 
-namespace
+namespace VictoryUI {}
+using namespace VictoryUI;
+namespace VictoryUI
 {
     const FLinearColor ColScreenBG(0.01f, 0.02f, 0.04f, 0.94f);
     const FLinearColor ColTitle   (0.95f, 0.82f, 0.30f, 1.0f);   // gold

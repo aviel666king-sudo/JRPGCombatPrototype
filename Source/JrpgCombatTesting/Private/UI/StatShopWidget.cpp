@@ -15,7 +15,9 @@
 #include "Exploration/JrpgGameMode.h"
 #include "Kismet/GameplayStatics.h"
 
-namespace
+namespace StatShopUI {}
+using namespace StatShopUI;
+namespace StatShopUI
 {
     const FLinearColor Dimmer    (0.00f, 0.00f, 0.00f, 0.72f);
     const FLinearColor CardBG     (0.05f, 0.06f, 0.09f, 0.98f);

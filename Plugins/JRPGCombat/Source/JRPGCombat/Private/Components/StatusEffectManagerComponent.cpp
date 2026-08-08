@@ -14,11 +14,17 @@ UStatusEffectManagerComponent::UStatusEffectManagerComponent()
 TArray<TObjectPtr<UStatusEffect>> UStatusEffectManagerComponent::GetSortedCopy() const
 {
     TArray<TObjectPtr<UStatusEffect>> Copy = ActiveEffects;
-    Copy.Sort([](const TObjectPtr<UStatusEffect>& A, const TObjectPtr<UStatusEffect>& B)
+
+    // ActiveEffects is a UPROPERTY, so a garbage-collected effect leaves a null entry behind.
+    // Drop those before sorting: as of UE 5.8 the TDereferenceWrapper specialization for
+    // TObjectPtr (ObjectPtr.h) makes TArray::Sort call Predicate(*A, *B), so the engine
+    // dereferences each element before the predicate ever sees it — a null can no longer be
+    // guarded against from inside the predicate the way it was pre-5.8.
+    Copy.RemoveAll([](const TObjectPtr<UStatusEffect>& E) { return !E; });
+
+    Copy.Sort([](const UStatusEffect& A, const UStatusEffect& B)
     {
-        const int32 PA = A ? A->Priority : 0;
-        const int32 PB = B ? B->Priority : 0;
-        return PA > PB;
+        return A.Priority > B.Priority;
     });
     return Copy;
 }
